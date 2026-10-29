@@ -27,6 +27,24 @@ Antes de estender o filtro territorial, é preciso mapear os códigos de municí
 do DataJud e a competência de cada Vara/JEF. Local do órgão e residência do
 requerente são variáveis diferentes.
 
+### Mapeamento oficial de jurisdição (07/10/2026)
+
+A [Resolução Presi TRF1 13/2026 e anexo](https://www.trf1.jus.br/sjgo/noticias/trf1-publica-resolucao-que-consolida-a-jurisdicao-das-secoes-e-subsecoes-judiciarias-da-1a-regiao)
+mostram municípios da RIDE/GO sob Anápolis, Formosa, Luziânia, Goiânia e
+Uruaçu. Os valores crus do órgão DataJud observados nessas sedes são 216,
+1798, 2788, 1903 e 5332, respectivamente; Brasília é 743. Para Minas Gerais,
+os quatro municípios da RIDE (Arinos, Buritis, Cabeceira Grande e Unaí) estão
+na jurisdição de Unaí/TRF6, cujo código DataJud observado é 3170404, conforme
+a [jurisdição oficial TRF6](https://sjmg.trf6.jus.br/jurisdicoes/).
+
+A consulta TRF1 retornou valores municipais de 3/4 dígitos mesmo no campo
+`codigoMunicipioIBGE`; não convertê-los como códigos IBGE. TRF6 retornou para
+Unaí o código IBGE de 7 dígitos. Consultas por código da sede recuperam
+candidatos cuja Vara tem jurisdição sobre o entorno, mas não identificam a
+residência da parte. Anápolis, Goiânia e Uruaçu estão fora da RIDE e devem
+permanecer como grupo suplementar; Unaí/TRF6 também deve ficar separado do
+estudo principal TRF1, até que a equipe confirme a ampliação do universo.
+
 Consulta inicial reproduzível:
 
 ```powershell
@@ -96,3 +114,22 @@ o recorte DF/RIDE. A ingestão reprodutível deve continuar consultando o
 DataJud diretamente, preservando payload Bronze, manifesto e proveniência no
 PostgreSQL. Não há motivo técnico para instalar o MCP como dependência da
 pipeline neste momento.
+
+### Atualização das fontes suplementares (07/10/2026)
+
+A busca pública de inteiro teor do eproc/TRF6 foi integrada como fonte externa
+suplementar: 20 decisões publicadas foram coletadas (10 TRF6, cinco TRU6 e cinco
+Turmas Recursais). O eproc/TRF4 acrescentou 20 decisões BPC (10 TRF4, cinco TRU4
+e cinco Turmas Recursais), e a pesquisa do eproc/TRF2 acrescentou 20 decisões
+(10 TRF2, cinco TRU2 e cinco Turmas Recursais; não são casos do recorte DF/RIDE).
+Nenhuma deve
+ser assumida como processo do recorte DF/RIDE nem enviada a modelo externo antes
+de revisão ética/privacidade. A consulta DataJud ao TJMG adicionou 361 registros de
+Arinos, Buritis e Unaí; competência federal delegada e residência não foram
+verificadas caso a caso. O lote Comunica PJe acrescentou 13 comunicações em 100
+consultas, sem oferecer petições ou inteiro teor. DataJud TJGO acrescentou 4.513
+processos (4.513 CNJs distintos nesta consulta) em órgãos estaduais de 29
+municípios goianos da RIDE; competência delegada e residência não estão
+confirmadas, então esse conjunto permanece suplementar e separado. O arquivo TRF1 está acessível
+para documentos já publicados; não há API pública documentada de lote para os
+autos das varas. A busca TRF3 continua indisponível nesta execução por timeout.

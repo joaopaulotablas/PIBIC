@@ -48,7 +48,17 @@ class InssBenefitsClient(StjClient):
         return resources[0]
 
 
-def aggregate_rows(rows, uf: str, competence: int | None = None) -> tuple[Counter, dict[str, Any]]:
+def selected_states(uf: str | list[str]) -> tuple[list[str], dict[str, str]]:
+    values = [uf] if isinstance(uf, str) else uf
+    if not values or any(not isinstance(x, str) or x.upper() not in UF_NAMES for x in values):
+        raise ValueError("UF brasileira inválida")
+    states = sorted(set(x.upper() for x in values))
+    aliases = {alias: state for state in states for alias in (state.lower(), UF_NAMES[state])}
+    return states, aliases
+
+
+def aggregate_rows(rows, uf: str | list[str], competence: int | None = None) -> tuple[Counter, dict[str, Any]]:
+    states, aliases = selected_states(uf)
     columns = {}
     header = None
     for header_line in range(1, 21):
@@ -81,8 +91,6 @@ def aggregate_rows(rows, uf: str, competence: int | None = None) -> tuple[Counte
         if len(matches) != 1:
             raise ValueError("Coluna competência de indeferimento ausente/ambígua")
         indices["competencia"] = matches[0]
-    if uf.upper() not in UF_NAMES:
-        raise ValueError("UF brasileira inválida")
     counts = Counter()
     read = selected = unknown_state = 0
     for row in rows:
@@ -104,20 +112,22 @@ def aggregate_rows(rows, uf: str, competence: int | None = None) -> tuple[Counte
         if species not in (87, 88):
             continue
         state = fold(row[indices["uf"]]).strip()
-        target = uf.lower()
         if state.upper() not in UF_NAMES and state not in UF_NAMES.values():
             unknown_state += 1
-        if state != target and state != UF_NAMES[uf.upper()]:
+        target = aliases.get(state)
+        if target is None:
             continue
         reason = str(row[indices["motivo"]] or "").strip() or "Não informado"
-        counts[(uf.upper(), species, reason)] += 1
+        counts[(target, species, reason)] += 1
         selected += 1
+    selection = {"uf": uf.upper()} if isinstance(uf, str) else {
+        "ufs": states, "selecionadas_por_uf": {s: sum(v for k, v in counts.items() if k[0] == s) for s in states}}
     return counts, {"linhas_lidas": read, "linhas_selecionadas": selected,
-                    "uf": uf.upper(), "especies": [87, 88], "cabecalho": list(header),
+                    **selection, "especies": [87, 88], "cabecalho": list(header),
                     "linha_cabecalho": header_line, "bpc_uf_desconhecida": unknown_state}
 
 
-def aggregate_xlsx(body: bytes, uf: str, competence: int | None = None) -> tuple[Counter, dict[str, Any]]:
+def aggregate_xlsx(body: bytes, uf: str | list[str], competence: int | None = None) -> tuple[Counter, dict[str, Any]]:
     workbook = load_workbook(io.BytesIO(body), read_only=True, data_only=True)
     try:
         if len(workbook.worksheets) != 1:

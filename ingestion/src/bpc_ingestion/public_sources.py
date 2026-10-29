@@ -222,16 +222,20 @@ class CjfClient:
                 (base_input["name"], base), ("formulario:actPesquisar", "")]
         return self.http.fetch(urljoin(self.URL, form.get("action") or self.URL), data)
 
-    def pages(self, query: str, base: str = "TRF1", limit: int = 1):
+    def pages(self, query: str, base: str = "TRF1", limit: int = 1, start_page: int = 1):
+        if limit < 1 or not 1 <= start_page <= 1000:
+            raise ValueError("Paginação CJF inválida")
         initial = self.search(query, base)
-        yield initial, initial
         soup = BeautifulSoup(initial, "html.parser")
         script = soup.find("script", id="formulario:tabelaDocumentos_s")
         if script is None:
             if re.search(r"(?:0\s+Documento|Nenhum|nenhum|não foram encontrad)", soup.get_text()):
+                if start_page == 1:
+                    yield initial, initial
                 return
-            if limit > 1:
+            if limit > 1 or start_page > 1:
                 raise ValueError("Paginação CJF ausente na resposta")
+            yield initial, initial
             return
         config = script.get_text()
         size = re.search(r"rows:(\d+)", config)
@@ -242,7 +246,13 @@ class CjfClient:
             raise ValueError("Configuração de paginação CJF mudou")
         rows, total = int(size[1]), int(count[1])
         state = view["value"]
-        for page in range(1, min(limit, (total + rows - 1) // rows)):
+        total_pages = (total + rows - 1) // rows
+        start_index = start_page - 1
+        if start_index == 0:
+            yield initial, initial
+            start_index = 1
+        end_index = min(total_pages, start_page - 1 + limit)
+        for page in range(start_index, end_index):
             data = [("javax.faces.partial.ajax", "true"), ("javax.faces.source", "formulario:tabelaDocumentos"),
                     ("javax.faces.partial.execute", "formulario:tabelaDocumentos"),
                     ("javax.faces.partial.render", "formulario:tabelaDocumentos"),

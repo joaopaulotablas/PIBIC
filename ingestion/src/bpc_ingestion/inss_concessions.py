@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from .inss_benefits import UF_NAMES, fold
+from .inss_benefits import UF_NAMES, fold, selected_states
 from .models import IndicadorInssConcessao
 
 DATASET = 'beneficios-concedidos-plano-de-dados-abertos-jun-2023-a-jun-2025'
@@ -25,8 +25,7 @@ def numeric_code(value):
 
 
 def aggregate_concession_rows(rows, uf, competence):
-    if uf.upper() not in UF_NAMES:
-        raise ValueError('UF brasileira inválida')
+    states, aliases = selected_states(uf)
     for line in range(1, 21):
         header = next(rows, None)
         if header is None:
@@ -64,13 +63,16 @@ def aggregate_concession_rows(rows, uf, competence):
         state = fold(row[state_index]).strip()
         if state.upper() not in UF_NAMES and state not in UF_NAMES.values():
             unknown += 1
-        if state not in (uf.lower(), UF_NAMES[uf.upper()]):
+        target = aliases.get(state)
+        if target is None:
             continue
         label = str(row[dispatch_index+1] or '').strip() or 'Não informado'
-        counts[(uf.upper(), species, dispatch, label)] += 1
+        counts[(target, species, dispatch, label)] += 1
+    selection = {'uf': uf.upper()} if isinstance(uf, str) else {
+        'ufs': states, 'selecionadas_por_uf': {s: sum(v for k, v in counts.items() if k[0] == s) for s in states}}
     return counts, {'linhas_lidas': read, 'linhas_selecionadas': sum(counts.values()),
                     'bpc_uf_desconhecida': unknown, 'linha_cabecalho': line,
-                    'cabecalho': list(header), 'uf': uf.upper(), 'especies': [87, 88]}
+                    'cabecalho': list(header), **selection, 'especies': [87, 88]}
 
 
 def aggregate_concession_xlsx(body, uf, competence):

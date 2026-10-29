@@ -166,6 +166,39 @@ somente após validar o piloto. Ao retomar uma coleta interrompida, não use
 docker compose run --rm ingestion comunica --limit 100
 ```
 
+### Consolidar bases locais e consultar um manifesto
+
+O script `scripts/snapshot_database.py` exporta uma cópia somente leitura do
+banco indicado por `DATABASE_URL`. Para unir origens, use
+`scripts/consolidate_databases.py --dry-run` primeiro e depois informe um novo
+arquivo `--output`; o script recusa sobrescrever saídas existentes. Ele aceita
+SQLite, SQLite compactado em gzip e snapshots SQLite do PostgreSQL, preservando
+origens e gerando um relatório de conflitos. Mantenha também os arquivos
+`data/raw/` (Bronze) referenciados pelas tabelas.
+
+`scripts/create_pilot_manifest.py` gera um CSV reproduzível. O comando
+`cjf-amostra --manifest caminho.csv --limit 50` consulta os CNJs listados sem
+seleção automática por Brasília; o manifesto pode ter até 200 casos. Configure
+`DATABASE_URL` para o novo SQLite ao executar coletas locais. Os documentos
+continuam dados locais e exigem revisão antes de uso analítico.
+
+Exemplo PowerShell para esta consolidação (use nomes novos em cada execução):
+
+```powershell
+$env:PYTHONPATH = "ingestion/src"
+.\.venv\Scripts\python.exe scripts\snapshot_database.py --output data\postgres-snapshot.sqlite
+.\.venv\Scripts\python.exe scripts\consolidate_databases.py `
+  --sqlite data\bpc-remote.sqlite `
+  --sqlite transferencia\bpc-jud.sqlite.gz `
+  --sqlite data\postgres-snapshot.sqlite `
+  --output data\bpc-consolidado-novo.sqlite `
+  --report data\conflitos-novo.json --dry-run
+```
+
+Revise a prévia, depois repita o mesmo comando com outro caminho de saída e
+remova `--dry-run`. `snapshot_database.py` lê a conexão configurada no ambiente
+sem exibir a URL. Preserve também os caminhos Bronze apontados pelos registros.
+
 Para repetir falhas temporárias:
 
 ```powershell

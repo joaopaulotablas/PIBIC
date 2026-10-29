@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import math
@@ -14,6 +15,15 @@ from .bronze import BronzeWriter
 from .archive_text import converted_document, pending_archive_text
 from .checkpoint import CheckpointStore
 from .comunica import ComunicaPjeClient
+from .communication_analysis import (
+    COMMUNICATION_ANALYSIS_PROMPT, MAX_COMMUNICATIONS,
+    PROMPT_VERSION as COMMUNICATION_PROMPT_VERSION,
+    TYPE as COMMUNICATION_EXTRACTION_TYPE,
+    prepare_inputs as prepare_communication_inputs,
+    store_result as store_communication_result,
+    validate_result as validate_communication_result,
+    validate_prepared_source,
+)
 from .config import (
     ASSUNTOS_BPC, TRIBUNAIS_DATAJUD, TRIBUNAIS_ESTADUAIS, TRIBUNAIS_PADRAO, Settings,
 )
@@ -25,16 +35,20 @@ from .inss_benefits import InssBenefitsClient, UF_NAMES, aggregate_xlsx, store_a
 from .inss_concessions import DATASET as CONCESSIONS_DATASET, aggregate_concession_xlsx, store_concessions
 from .ipeaia import (IpeaIaClient, PROMPT_VERSION, RejectedIpeaResponse,
                     load_process_input, pending_processes, save_rejected_response)
-from .models import Coleta, ExtracaoIa, IndicadorInssConcessao, IndicadorInssIndeferimento, Processo
+from .models import (Coleta, ComunicacaoPje, ExtracaoIa, IndicadorInssConcessao,
+                     IndicadorInssIndeferimento, Processo)
 from .persistence import agora_iso
 from .postgres_store import PostgresStore
 from .published_documents import official_url, published_documents
 from .public_sources import (ArchiveClient, CjfClient, PublicHttp, SourceBlocked, StjClient, bpc_text, ensure_document_tables,
-                             cjf_partition, pending_cjf_sample, preserve_raw, store_document, stj_document)
+                             cjf_partition, cnj_number, pending_cjf_sample, preserve_raw, store_document, stj_document)
 from .sqlite_store import SqliteStore
 from .transparencia import TransparenciaClient, meses_no_periodo, normalizar_indicador
 from .tnu_search import HOST as TNU_HOST, TnuSearchClient
 from .trf5_search import HOST as TRF5_HOST, Trf5SearchClient
+from .trf6_search import HOST as TRF6_HOST, ORIGINS as TRF6_ORIGINS, Trf6SearchClient, unique_links
+from .trf4_search import HOST as TRF4_HOST, ORIGINS as TRF4_ORIGINS, Trf4SearchClient
+from .trf2_search import HOST as TRF2_HOST, ORIGINS as TRF2_ORIGINS, Trf2SearchClient
 
 
 LOGGER = logging.getLogger("bpc_ingestion")
@@ -95,18 +109,32 @@ def construir_parser() -> argparse.ArgumentParser:
     triagem.add_argument("--max-movimentos", type=int, default=100)
     triagem.add_argument("--timeout", type=float, help="Tempo limite de rede em segundos; padrao IPEAIA_TIMEOUT_SECONDS (600)")
     triagem.add_argument("--executar", action="store_true", help="Envia à API e grava; sem isto, só pré-visualiza")
+    text_prepare = commands.add_parser(
+        "ipeaia-comunicacoes-preparar",
+        help="Prepara entrada local minimizada; não chama serviços externos",
+    )
+    text_prepare.add_argument("--limit", type=int, default=MAX_COMMUNICATIONS)
+    text_prepare.add_argument("--output", default="data/ipeaia_comunicacoes_preparadas.json")
+    text_import = commands.add_parser(
+        "ipeaia-comunicacoes-importar",
+        help="Valida e grava resultados JSON locais como extração pendente; sem rede",
+    )
+    text_import.add_argument("--source", required=True, help="JSON de entrada minimizada previamente preparado")
+    text_import.add_argument("--results", required=True, help="JSON local com processo_id e resultado")
+    text_import.add_argument("--model", default="local-import", help="ID real do modelo usado; default local-import")
     sources = commands.add_parser("documentos-publicos", help="Coleta corpus complementar oficial com origem")
     sources.add_argument("--fonte", required=True, choices=("stj", "cjf"))
     sources.add_argument("--limit", type=int, default=20)
     sources.add_argument("--recursos", type=int, default=2, help="Arquivos JSON recentes por conjunto STJ")
     sources.add_argument("--historico", action="store_true", help="Inclui primeiro os ZIP históricos STJ (download maior)")
     sources.add_argument("--paginas", type=int, default=1, help="Páginas CJF (30 documentos por página)")
+    sources.add_argument("--pagina-inicial", type=int, default=1, help="Página inicial CJF para retomar resultados além do primeiro bloco")
     sources.add_argument("--conjuntos", nargs="+", default=["espelhos-de-acordaos-primeira-turma", "espelhos-de-acordaos-segunda-turma"])
     sources.add_argument("--query", default='"benefício assistencial"')
     sources.add_argument("--base", choices=("TRF1", "JEF1"), default="TRF1")
     sources.add_argument("--timeout", type=float, default=60)
     sources.add_argument("--raw-dir", default="data/raw")
-    published = commands.add_parser("documentos-publicados", help="Baixa HTML oficial TNU/TRF3/TRF5 por links publicados")
+    published = commands.add_parser("documentos-publicados", help="Baixa HTML oficial TNU/TRF2/TRF3/TRF4/TRF5/TRF6 por links publicados")
     published.add_argument("--urls", nargs="+", required=True)
     published.add_argument("--timeout", type=float, default=120)
     published.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
@@ -126,7 +154,38 @@ def construir_parser() -> argparse.ArgumentParser:
     trf5.add_argument("--retentar", action="store_true", help="Também consulta documentos já concluídos nesta versão do parser")
     trf5.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
     sample = commands.add_parser("cjf-amostra", help="Busca textos públicos por CNJ da amostra existente de Brasília")
-    sample.add_argument("--limit", type=int, default=10, help="Número de processos a consultar, 1..50")
+    sample.add_argument("--limit", type=int, default=10, help="Número de processos a consultar (50 automático; até 200 com manifesto)")
+    sample.add_argument("--manifest", type=Path, help="CSV explícito com coluna cnj; consulta esses CNJs sem seleção automática por Brasília")
+    trf6 = commands.add_parser("trf6-pesquisa", help="Busca jurisprudencia publica TRF6 e coleta documentos BPC/LOAS")
+    trf6.add_argument("--query", default="BPC")
+    trf6.add_argument("--limit", type=int, default=10)
+    trf6.add_argument("--paginas", type=int, default=5)
+    trf6.add_argument("--pagina-inicial", type=int, default=1,
+                      help="Página inicial do TRF6; use para retomar após um lote anterior")
+    trf6.add_argument("--origens", nargs="+", choices=TRF6_ORIGINS, default=["TRF6"])
+    trf6.add_argument("--timeout", type=float, default=120)
+    trf6.add_argument("--retentar", action="store_true")
+    trf6.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    trf4 = commands.add_parser("trf4-pesquisa", help="Busca jurisprudencia publica TRF4 e coleta links BPC/LOAS")
+    trf4.add_argument("--query", default="BPC")
+    trf4.add_argument("--limit", type=int, default=10)
+    trf4.add_argument("--paginas", type=int, default=5)
+    trf4.add_argument("--pagina-inicial", type=int, default=1,
+                      help="Página inicial do TRF4 para retomar resultados")
+    trf4.add_argument("--origens", nargs="+", choices=TRF4_ORIGINS, default=["TRF4"])
+    trf4.add_argument("--timeout", type=float, default=120)
+    trf4.add_argument("--retentar", action="store_true")
+    trf4.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    trf2 = commands.add_parser("trf2-pesquisa", help="Busca jurisprudencia publica TRF2 e coleta links BPC/LOAS")
+    trf2.add_argument("--query", default="BPC")
+    trf2.add_argument("--limit", type=int, default=10)
+    trf2.add_argument("--paginas", type=int, default=5)
+    trf2.add_argument("--pagina-inicial", type=int, default=1,
+                      help="Página inicial do TRF2 para retomar resultados")
+    trf2.add_argument("--origens", nargs="+", choices=TRF2_ORIGINS, default=["TRF2"])
+    trf2.add_argument("--timeout", type=float, default=120)
+    trf2.add_argument("--retentar", action="store_true")
+    trf2.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
     sample.add_argument("--base", choices=("TRF1", "JEF1"), default="JEF1")
     sample.add_argument("--paginas", type=int, default=2)
     sample.add_argument("--timeout", type=float, default=120)
@@ -134,16 +193,29 @@ def construir_parser() -> argparse.ArgumentParser:
     sample.add_argument("--raw-dir", default="data/raw")
     benefits = commands.add_parser("inss-indeferimentos", help="Agrega motivos BPC por competência e UF")
     benefits.add_argument("--competencia", type=int, required=True)
-    benefits.add_argument("--uf", default="DF")
+    benefits_states = benefits.add_mutually_exclusive_group()
+    benefits_states.add_argument("--uf")
+    benefits_states.add_argument("--ufs", nargs="+", choices=sorted(UF_NAMES))
     benefits.add_argument("--timeout", type=float, default=180)
     benefits.add_argument("--raw-dir", default="data/raw")
     benefits.add_argument("--arquivo", type=Path, help="XLSX ou XLSX.gz local do mesmo recurso mensal")
     grants = commands.add_parser("inss-concessoes", help="Agrega concessões BPC por UF, espécie e despacho, sem pessoas")
     grants.add_argument("--competencia", type=int, required=True)
-    grants.add_argument("--uf", default="DF")
+    grants_states = grants.add_mutually_exclusive_group()
+    grants_states.add_argument("--uf")
+    grants_states.add_argument("--ufs", nargs="+", choices=sorted(UF_NAMES))
     grants.add_argument("--timeout", type=float, default=180)
     grants.add_argument("--raw-dir", default="data/raw")
     grants.add_argument("--arquivo", type=Path, help="XLSX ou XLSX.gz local do mesmo recurso mensal")
+    suas = commands.add_parser("mds-censo-suas", help="Agrega unidades públicas CRAS e Postos de Cadastro por município")
+    suas.add_argument("--ano", type=int, choices=(2025,), default=2025)
+    suas.add_argument("--tipos", nargs="+", choices=("cras", "posto_cadastramento"),
+                      default=("cras", "posto_cadastramento"))
+    suas.add_argument("--storage", choices=("postgres", "sqlite"), default="postgres")
+    suas.add_argument("--sqlite-path", type=Path, default=Path("data/bpc_analytics.sqlite3"))
+    suas.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    suas.add_argument("--arquivo-cras", type=Path, help="ZIP oficial local de CRAS 2025")
+    suas.add_argument("--arquivo-postos", type=Path, help="ZIP oficial local de Postos de Cadastro 2025")
     commands.add_parser("verificar-arquivo-trf1", help="Verifica acesso público sem contornar anti-robô")
     archive = commands.add_parser("arquivo-trf1", help="Consulta disponibilidade por CNJ no arquivo público")
     archive.add_argument("--numero", nargs="+", required=True)
@@ -267,8 +339,10 @@ def collect_comunica(args: argparse.Namespace, settings: Settings) -> int:
     )
     total = 0
     raw_path: str | None = None
+    consecutive_errors = 0
     try:
-        with BronzeWriter(settings.raw_data_dir, "comunica_pje", "processos", run_id) as bronze:
+        with BronzeWriter(settings.raw_data_dir, "comunica_pje", "processos", run_id,
+                          atomic_records=True) as bronze:
             raw_path = str(bronze.path)
             for index, number in enumerate(numbers, start=1):
                 result = client.fetch_process(number)
@@ -292,8 +366,11 @@ def collect_comunica(args: argparse.Namespace, settings: Settings) -> int:
                     "%d/%d %s: %s (%d comunicacoes)",
                     index, len(numbers), number, result.status, len(result.items),
                 )
+                consecutive_errors = consecutive_errors + 1 if result.status == "erro_temporario" else 0
+                if result.status == "bloqueado" or consecutive_errors >= 3:
+                    raise RuntimeError("Comunica indisponível/bloqueado: lote interrompido; consultas anteriores preservadas")
         store.finish_collection(run_id, "concluida", total, raw_path)
-    except Exception as exc:
+    except BaseException as exc:
         store.finish_collection(run_id, "falhou", total, raw_path, str(exc))
         raise
     finally:
@@ -427,6 +504,74 @@ def ipeaia_triage(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def ipeaia_communications_prepare(args: argparse.Namespace, settings: Settings) -> int:
+    store = PostgresStore(settings.database_url)
+    try:
+        with store.Session() as session:
+            prepared = prepare_communication_inputs(session, args.limit)
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        document = {
+            "tipo_extracao": COMMUNICATION_EXTRACTION_TYPE,
+            "versao_prompt": COMMUNICATION_PROMPT_VERSION,
+            "prompt": COMMUNICATION_ANALYSIS_PROMPT,
+            "processos": prepared,
+            "chamadas_externas_executadas": False,
+            "revisao_privacidade": "pendente",
+        }
+        output.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+        LOGGER.info("Entrada local minimizada: %d processos, %d comunicações; sem chamadas externas; %s",
+                    len(prepared), sum(len(x["comunicacoes"]) for x in prepared), output)
+    finally:
+        store.close()
+    return 0
+
+
+def ipeaia_communications_import(args: argparse.Namespace, settings: Settings) -> int:
+    if not args.model or len(args.model) > 100:
+        raise ValueError("--model deve ter entre 1 e 100 caracteres")
+    prepared_doc = json.loads(Path(args.source).read_text(encoding="utf-8"))
+    results = json.loads(Path(args.results).read_text(encoding="utf-8"))
+    if (not isinstance(prepared_doc, dict)
+            or prepared_doc.get("tipo_extracao") != COMMUNICATION_EXTRACTION_TYPE
+            or prepared_doc.get("versao_prompt") != COMMUNICATION_PROMPT_VERSION
+            or not isinstance(prepared_doc.get("processos"), list)
+            or not isinstance(results, list)):
+        raise ValueError("source/results incompatíveis com o contrato de análise textual")
+    prepared = prepared_doc["processos"]
+    prepared_by_process = {}
+    for item in prepared:
+        if (not isinstance(item, dict) or type(item.get("processo_id")) is not int
+                or item["processo_id"] in prepared_by_process):
+            raise ValueError("processo_id da entrada preparada deve ser inteiro único")
+        prepared_by_process[item["processo_id"]] = item
+    seen: set[int] = set()
+    store = PostgresStore(settings.database_url)
+    try:
+        for entry in results:
+            process_id = entry.get("processo_id")
+            if type(process_id) is not int or process_id not in prepared_by_process or process_id in seen:
+                raise ValueError("processo_id ausente, duplicado ou fora da entrada preparada")
+            seen.add(process_id)
+            with store.Session.begin() as session:
+                process_source = prepared_by_process[process_id]
+                validate_prepared_source(session, process_source)
+                result = validate_communication_result(entry.get("resultado"), [process_source])
+                valid_ids = {int(x["comunicacao_id"]) for x in prepared_by_process[process_id]["comunicacoes"]}
+                for ev in result["evidencias"]:
+                    linked = session.query(ComunicacaoPje).filter_by(
+                        id=ev["comunicacao_id"], processo_id=process_id,
+                        hash_conteudo=ev["hash_conteudo"],
+                    ).first()
+                    if ev["comunicacao_id"] not in valid_ids or linked is None:
+                        raise ValueError("evidência não pertence ao processo da extração")
+                store_communication_result(session, process_id, result, args.model)
+    finally:
+        store.close()
+    LOGGER.info("Importadas %d novas extrações textuais, todas pendentes; extrações existentes preservadas", len(results))
+    return 0
+
+
 def catalog_inss(args: argparse.Namespace, settings: Settings) -> int:
     store = PostgresStore(settings.database_url)
     run_id = store.start_collection(
@@ -449,6 +594,8 @@ def catalog_inss(args: argparse.Namespace, settings: Settings) -> int:
 def collect_public_documents(args: argparse.Namespace, settings: Settings) -> int:
     if not 1 <= args.limit <= 500 or not 1 <= args.recursos <= 24 or not 1 <= args.paginas <= 20 or not 0 < args.timeout <= 600:
         raise ValueError("Use limit 1..500, recursos 1..24 e timeout 0..600")
+    if args.fonte == "cjf" and not 1 <= args.pagina_inicial <= 1000:
+        raise ValueError("Use pagina-inicial CJF entre 1 e 1000")
     store = PostgresStore(settings.database_url)
     run = None
     inserted = observed = 0
@@ -469,7 +616,9 @@ def collect_public_documents(args: argparse.Namespace, settings: Settings) -> in
                 for resource in client.recent_json(package, args.recursos):
                     batches.append(resource)
         else:
-            batches = CjfClient(http).pages(args.query, args.base, args.paginas)
+            batches = CjfClient(http).pages(
+                args.query, args.base, args.paginas, args.pagina_inicial
+            )
         for resource in batches:
             if observed >= args.limit:
                 break
@@ -499,13 +648,13 @@ def collect_public_documents(args: argparse.Namespace, settings: Settings) -> in
     return 0
 
 
-def _collect_published_target(store, http, source, identifier, url, raw_dir):
+def _collect_published_target(store, http, source, identifier, url, raw_dir, expected_number=None):
     run = store.start_collection(source, identifier, {"url": url, "versao_parser": "publicados_html_v1"})
     raw = None
     try:
         body = http.fetch(url)
         raw = preserve_raw(body, raw_dir, source, run, "html")
-        documents = published_documents(body, url)
+        documents = published_documents(body, url, expected_number=expected_number)
         with store.Session.begin() as session:
             inserted = sum(int(store_document(session, doc, run, raw)) for doc in documents)
         store.finish_collection(run, "concluida" if documents else "sem_resultado", len(documents), raw_file=str(raw))
@@ -662,14 +811,228 @@ def collect_trf5_search(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def collect_trf6_search(args: argparse.Namespace, settings: Settings) -> int:
+    if (not args.query.strip() or len(args.query) > 200 or not 1 <= args.limit <= 50
+            or not 1 <= args.paginas <= 100 or not 1 <= args.pagina_inicial <= 1_000_000
+            or not math.isfinite(args.timeout) or not 0 < args.timeout <= 600):
+        raise ValueError("Use query ate 200 caracteres, limit 1..50, paginas 1..100, pagina-inicial positiva e timeout ate 600")
+    store = PostgresStore(settings.database_url)
+    run, last_raw = None, None
+    done = documents = inserted = skipped = pages_read = 0
+    try:
+        ensure_document_tables(store.engine)
+        run = store.start_collection("trf6_pesquisa", args.query,
+            {"query": args.query, "limit": args.limit, "paginas": args.paginas,
+             "pagina_inicial": args.pagina_inicial, "origens": args.origens,
+             "versao_busca": "trf6_eproc_form_v1"})
+        with store.Session() as session:
+            completed = set() if args.retentar else {
+                c.particao for c in session.query(Coleta).filter(Coleta.fonte == "trf6_jurisprudencia",
+                    Coleta.status.in_(("concluida", "sem_resultado", "bloqueada", "falhou")))
+                if (c.parametros or {}).get("versao_parser") == "publicados_html_v1"}
+        def save_search(url, body):
+            nonlocal last_raw
+            last_raw = preserve_raw(body, args.raw_dir, "trf6_pesquisa", run, "html")
+        http = PublicHttp(timeout=args.timeout, allowed_hosts={TRF6_HOST}, max_bytes=24 * 1024 * 1024,
+                          form_encoding="iso-8859-1")
+        client = Trf6SearchClient(http, on_response=save_search)
+        seen = set()
+        for page, body, links in client.pages(args.query, args.paginas, tuple(args.origens),
+                                               args.pagina_inicial):
+            pages_read += 1
+            LOGGER.info("TRF6: pagina %d, %d links; %d URLs consultadas neste lote", page, len(links), done)
+            expected_numbers = client.process_numbers(body)
+            for url in unique_links(links, seen):
+                source, identifier, canonical = official_url(url)
+                if identifier in completed:
+                    skipped += 1
+                    continue
+                count, new = _collect_published_target(store, http, source, identifier, canonical, args.raw_dir,
+                                                       expected_number=expected_numbers.get(identifier))
+                documents += count
+                inserted += new
+                done += 1
+                if done >= args.limit:
+                    break
+            if done >= args.limit:
+                break
+        with store.Session.begin() as session:
+            row = session.get(Coleta, UUID(run))
+            row.parametros = {**row.parametros, **client.context, "paginas_lidas": pages_read,
+                              "urls_consultadas": done, "urls_ja_concluidas": skipped,
+                              "documentos_observados": documents, "versoes_novas": inserted,
+                              "limite_atingido": done >= args.limit}
+        store.finish_collection(run, "sem_resultado" if client.context.get("resultados_informados") == 0 else "concluida",
+                                documents, raw_file=str(last_raw) if last_raw else None)
+        LOGGER.info("TRF6: %d URLs consultadas, %d documentos, %d versoes novas; %d URLs concluidas puladas",
+                    done, documents, inserted, skipped)
+    except Exception as exc:
+        if run:
+            blocked = isinstance(exc, SourceBlocked) or isinstance(exc.__cause__, SourceBlocked)
+            store.finish_collection(run, "bloqueada" if blocked else "falhou", documents,
+                                    raw_file=str(last_raw) if last_raw else None, error=str(exc))
+        raise RuntimeError(f"Pesquisa TRF6: {exc}; documentos anteriores preservados") from exc
+    finally:
+        store.close()
+    return 0
+
+
+def collect_trf4_search(args: argparse.Namespace, settings: Settings) -> int:
+    if (not args.query.strip() or len(args.query) > 200 or not 1 <= args.limit <= 50
+            or not 1 <= args.paginas <= 100 or not 1 <= args.pagina_inicial <= 1_000_000
+            or not math.isfinite(args.timeout) or not 0 < args.timeout <= 600):
+        raise ValueError("Use query ate 200 caracteres, limit 1..50, paginas 1..100, pagina-inicial positiva e timeout ate 600")
+    store = PostgresStore(settings.database_url)
+    run, last_raw = None, None
+    done = documents = inserted = skipped = pages_read = 0
+    try:
+        ensure_document_tables(store.engine)
+        run = store.start_collection("trf4_pesquisa", args.query,
+            {"query": args.query, "limit": args.limit, "paginas": args.paginas,
+             "pagina_inicial": args.pagina_inicial, "origens": args.origens,
+             "versao_busca": "trf4_eproc_form_v1"})
+        with store.Session() as session:
+            completed = set() if args.retentar else {
+                c.particao for c in session.query(Coleta).filter(Coleta.fonte == "trf4_jurisprudencia",
+                    Coleta.status.in_(("concluida", "sem_resultado")))
+                if (c.parametros or {}).get("versao_parser") == "publicados_html_v1"}
+        def save_search(url, body):
+            nonlocal last_raw
+            last_raw = preserve_raw(body, args.raw_dir, "trf4_pesquisa", run, "html")
+        http = PublicHttp(timeout=args.timeout, allowed_hosts={TRF4_HOST}, max_bytes=32 * 1024 * 1024,
+                          form_encoding="iso-8859-1")
+        client = Trf4SearchClient(http, on_response=save_search)
+        seen = set()
+        for page, body, links in client.pages(args.query, args.paginas, tuple(args.origens),
+                                               args.pagina_inicial):
+            pages_read += 1
+            LOGGER.info("TRF4: pagina %d, %d links; %d URLs consultadas neste lote", page, len(links), done)
+            expected_numbers = client.last_process_numbers
+            for url in unique_links(links, seen):
+                source, identifier, canonical = official_url(url)
+                if identifier in completed:
+                    skipped += 1
+                    continue
+                count, new = _collect_published_target(store, http, source, identifier, canonical, args.raw_dir,
+                                                       expected_number=expected_numbers.get(identifier))
+                documents += count
+                inserted += new
+                done += 1
+                if done >= args.limit:
+                    break
+            if done >= args.limit:
+                break
+        with store.Session.begin() as session:
+            row = session.get(Coleta, UUID(run))
+            row.parametros = {**row.parametros, **client.context, "paginas_lidas": pages_read,
+                              "urls_consultadas": done, "urls_ja_concluidas": skipped,
+                              "documentos_observados": documents, "versoes_novas": inserted,
+                              "limite_atingido": done >= args.limit}
+        store.finish_collection(run, "sem_resultado" if client.context.get("resultados_informados") == 0 else "concluida",
+                                documents, raw_file=str(last_raw) if last_raw else None)
+        LOGGER.info("TRF4: %d URLs consultadas, %d documentos, %d versoes novas; %d URLs concluidas puladas",
+                    done, documents, inserted, skipped)
+    except Exception as exc:
+        if run:
+            blocked = isinstance(exc, SourceBlocked) or isinstance(exc.__cause__, SourceBlocked)
+            store.finish_collection(run, "bloqueada" if blocked else "falhou", documents,
+                                    raw_file=str(last_raw) if last_raw else None, error=str(exc))
+        raise RuntimeError(f"Pesquisa TRF4: {exc}; documentos anteriores preservados") from exc
+    finally:
+        store.close()
+    return 0
+
+
+def collect_trf2_search(args: argparse.Namespace, settings: Settings) -> int:
+    if (not args.query.strip() or len(args.query) > 200 or not 1 <= args.limit <= 50
+            or not 1 <= args.paginas <= 100 or not 1 <= args.pagina_inicial <= 1_000_000
+            or not math.isfinite(args.timeout) or not 0 < args.timeout <= 600):
+        raise ValueError("Use query ate 200 caracteres, limit 1..50, paginas 1..100, pagina-inicial positiva e timeout ate 600")
+    store = PostgresStore(settings.database_url)
+    run, last_raw = None, None
+    done = documents = inserted = skipped = pages_read = 0
+    try:
+        ensure_document_tables(store.engine)
+        run = store.start_collection("trf2_pesquisa", args.query,
+            {"query": args.query, "limit": args.limit, "paginas": args.paginas,
+             "pagina_inicial": args.pagina_inicial, "origens": args.origens,
+             "versao_busca": "trf2_eproc_form_v1"})
+        with store.Session() as session:
+            completed = set() if args.retentar else {
+                c.particao for c in session.query(Coleta).filter(Coleta.fonte == "trf2_jurisprudencia",
+                    Coleta.status.in_(("concluida", "sem_resultado")))
+                if (c.parametros or {}).get("versao_parser") == "publicados_html_v1"}
+        def save_search(url, body):
+            nonlocal last_raw
+            last_raw = preserve_raw(body, args.raw_dir, "trf2_pesquisa", run, "html")
+        http = PublicHttp(timeout=args.timeout, allowed_hosts={TRF2_HOST}, max_bytes=32 * 1024 * 1024,
+                          form_encoding="iso-8859-1")
+        client = Trf2SearchClient(http, on_response=save_search)
+        seen = set()
+        for page, body, links in client.pages(args.query, args.paginas, tuple(args.origens),
+                                               args.pagina_inicial):
+            pages_read += 1
+            LOGGER.info("TRF2: pagina %d, %d links; %d URLs consultadas neste lote", page, len(links), done)
+            expected_numbers = client.last_process_numbers
+            for url in unique_links(links, seen):
+                source, identifier, canonical = official_url(url)
+                if identifier in completed:
+                    skipped += 1
+                    continue
+                count, new = _collect_published_target(store, http, source, identifier, canonical, args.raw_dir,
+                                                       expected_number=expected_numbers.get(identifier))
+                documents += count
+                inserted += new
+                done += 1
+                if done >= args.limit:
+                    break
+            if done >= args.limit:
+                break
+        with store.Session.begin() as session:
+            row = session.get(Coleta, UUID(run))
+            row.parametros = {**row.parametros, **client.context, "paginas_lidas": pages_read,
+                              "urls_consultadas": done, "urls_ja_concluidas": skipped,
+                              "documentos_observados": documents, "versoes_novas": inserted,
+                              "limite_atingido": done >= args.limit}
+        store.finish_collection(run, "sem_resultado" if client.context.get("resultados_informados") == 0 else "concluida",
+                                documents, raw_file=str(last_raw) if last_raw else None)
+        LOGGER.info("TRF2: %d URLs consultadas, %d documentos, %d versoes novas; %d URLs concluidas puladas",
+                    done, documents, inserted, skipped)
+    except Exception as exc:
+        if run:
+            blocked = isinstance(exc, SourceBlocked) or isinstance(exc.__cause__, SourceBlocked)
+            store.finish_collection(run, "bloqueada" if blocked else "falhou", documents,
+                                    raw_file=str(last_raw) if last_raw else None, error=str(exc))
+        raise RuntimeError(f"Pesquisa TRF2: {exc}; documentos anteriores preservados") from exc
+    finally:
+        store.close()
+    return 0
+
+
 def collect_cjf_sample(args: argparse.Namespace, settings: Settings) -> int:
-    if not 1 <= args.limit <= 50 or not 1 <= args.paginas <= 20 or not 0 < args.timeout <= 600:
-        raise ValueError("Use limit 1..50, paginas 1..20 e timeout positivo até 600")
+    max_limit = 200 if args.manifest else 50
+    if not 1 <= args.limit <= max_limit or not 1 <= args.paginas <= 20 or not 0 < args.timeout <= 600:
+        raise ValueError(f"Use limit 1..{max_limit}, paginas 1..20 e timeout positivo até 600")
     store = PostgresStore(settings.database_url)
     try:
         ensure_document_tables(store.engine)
-        with store.Session() as session:
-            numbers = pending_cjf_sample(session, args.base, args.paginas, args.limit, args.retentar)
+        if args.manifest:
+            with args.manifest.open("r", encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            if not rows or "cnj" not in rows[0]:
+                raise ValueError("Manifesto CSV deve conter cabeçalho 'cnj' e ao menos uma linha")
+            numbers = []
+            for row in rows:
+                number = cnj_number(row.get("cnj"))
+                if number is None:
+                    raise ValueError("Manifesto contém CNJ inválido")
+                if number not in numbers:
+                    numbers.append(number)
+            if len(numbers) > args.limit:
+                raise ValueError(f"Manifesto contém {len(numbers)} CNJs, acima de --limit {args.limit}")
+        else:
+            with store.Session() as session:
+                numbers = pending_cjf_sample(session, args.base, args.paginas, args.limit, args.retentar)
         LOGGER.info("CJF %s: %d processos pendentes da amostra; sem envio à IA", args.base, len(numbers))
         client = CjfClient(PublicHttp(timeout=args.timeout))
         for number in numbers:
@@ -706,7 +1069,10 @@ def collect_inss_benefits(args: argparse.Namespace, settings: Settings) -> int:
     import gzip
     from .models import Coleta
     import uuid
-    if args.uf.upper() not in UF_NAMES or not math.isfinite(args.timeout) or args.timeout <= 0:
+    uf = getattr(args, "ufs", None) or args.uf or "DF"
+    from .inss_benefits import selected_states
+    selected_states(uf)
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError("Informe uma UF brasileira válida e timeout positivo/finito")
     store = PostgresStore(settings.database_url)
     run = None
@@ -719,12 +1085,13 @@ def collect_inss_benefits(args: argparse.Namespace, settings: Settings) -> int:
         client = InssBenefitsClient(PublicHttp(timeout=args.timeout, max_bytes=128 * 1024 * 1024))
         package = client.package(CONCESSIONS_DATASET if concessions else client.DATASET)
         resource = client.monthly_resource(package, args.competencia)
-        parameters = {"competencia": args.competencia, "uf": args.uf.upper(), "recurso_id": resource["id"],
+        selection = {"ufs": sorted(set(uf))} if isinstance(uf, list) else {"uf": uf.upper()}
+        parameters = {"competencia": args.competencia, **selection, "recurso_id": resource["id"],
                       "recurso_url": resource["url"], "arquivo_local": str(args.arquivo) if args.arquivo else None}
         run = store.start_collection(source_name, str(args.competencia), parameters)
         preserve_raw(client.package_raw, Path(args.raw_dir), source_name, run, "catalogo.json")
         LOGGER.info("INSS: baixando/lendo recurso mensal %s, UF=%s; nenhuma linha pessoal vai à Silver",
-                    args.competencia, args.uf)
+                    args.competencia, uf)
         if args.arquivo:
             opener = gzip.open if args.arquivo.suffix == ".gz" else open
             with opener(args.arquivo, "rb") as source:
@@ -737,7 +1104,7 @@ def collect_inss_benefits(args: argparse.Namespace, settings: Settings) -> int:
         LOGGER.info("INSS: Bronze preservada em %s; agregando a planilha completa...", raw)
         aggregate = aggregate_concession_xlsx if concessions else aggregate_xlsx
         persist = store_concessions if concessions else store_aggregates
-        counts, quality = aggregate(body, args.uf, args.competencia)
+        counts, quality = aggregate(body, uf, args.competencia)
         with store.Session.begin() as session:
             inserted = persist(session, counts, resource, args.competencia, body, raw, run)
             collection = session.get(Coleta, uuid.UUID(run))
@@ -752,6 +1119,85 @@ def collect_inss_benefits(args: argparse.Namespace, settings: Settings) -> int:
     finally:
         store.close()
     return 0
+
+
+def collect_mds_censo_suas(args: argparse.Namespace, settings: Settings) -> int:
+    import uuid
+    from datetime import datetime, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from .mds_suas import ARQUIVOS, aggregate_zip, store_aggregates
+    from .models import IndicadorSuasMunicipio
+
+    if args.ano != 2025 or not args.tipos:
+        raise ValueError("Informe o ano 2025 e ao menos um tipo de unidade")
+    if args.storage == "postgres":
+        store = PostgresStore(settings.database_url)
+        engine, Session = store.engine, store.Session
+    else:
+        path = args.sqlite_path.resolve()
+        if not path.is_file():
+            raise ValueError(f"SQLite de destino não existe: {path}")
+        store = None
+        engine = create_engine(f"sqlite:///{path.as_posix()}", connect_args={"timeout": 30})
+        Session = sessionmaker(engine, expire_on_commit=False)
+    Coleta.__table__.create(engine, checkfirst=True)
+    IndicadorSuasMunicipio.__table__.create(engine, checkfirst=True)
+    http = PublicHttp(timeout=180, interval=1, max_bytes=128 * 1024 * 1024,
+                      allowed_hosts={"aplicacoes.mds.gov.br"})
+    cache_dir = args.raw_dir / "mds_censo_suas_2025"
+    failures = 0
+    try:
+        for tipo in dict.fromkeys(args.tipos):
+            url = ARQUIVOS[tipo]
+            run_id = uuid.uuid4()
+            local_arg = args.arquivo_cras if tipo == "cras" else args.arquivo_postos
+            cached = cache_dir / f"{tipo}.zip"
+            params = {"ano": args.ano, "tipo_unidade": tipo, "url": url,
+                      "arquivo_local": str(local_arg) if local_arg else None}
+            with Session.begin() as session:
+                session.add(Coleta(id=run_id, fonte="mds_censo_suas", particao=f"{args.ano}:{tipo}",
+                                   status="executando", parametros=params, registros=0,
+                                   iniciado_em=datetime.now(timezone.utc)))
+            try:
+                if local_arg is not None:
+                    body = local_arg.read_bytes()
+                elif cached.is_file():
+                    body = cached.read_bytes()
+                else:
+                    body = http.fetch(url)
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    partial = cached.with_suffix(".zip.partial")
+                    partial.write_bytes(body)
+                    partial.replace(cached)
+                raw = preserve_raw(body, args.raw_dir, "mds_censo_suas", str(run_id), "zip")
+                records, quality, digest = aggregate_zip(body, tipo)
+                with Session.begin() as session:
+                    inserted = store_aggregates(session, records, ano=args.ano, url=url,
+                                                raw_path=str(raw), digest=digest, run_id=run_id)
+                    collection = session.get(Coleta, run_id)
+                    collection.status = "concluida"
+                    collection.registros = quality["unidades_unicas"]
+                    collection.arquivo_bruto = str(raw)
+                    collection.parametros = dict(params, qualidade=quality, hash_arquivo=digest)
+                    collection.finalizado_em = datetime.now(timezone.utc)
+                LOGGER.info("Censo SUAS %s/%d: %d unidades únicas em %d municípios; %d linhas duplicadas; %d municípios novos",
+                            tipo, args.ano, quality["unidades_unicas"], quality["municipios"],
+                            quality["linhas_unidade_duplicadas"], inserted)
+            except Exception as exc:
+                with Session.begin() as session:
+                    collection = session.get(Coleta, run_id)
+                    collection.status = "falhou"
+                    collection.erro = str(exc)
+                    collection.finalizado_em = datetime.now(timezone.utc)
+                LOGGER.error("Censo SUAS %s falhou: %s; seguindo para a próxima fonte/tipo", tipo, exc)
+                failures += 1
+    finally:
+        if store is not None:
+            store.close()
+        else:
+            engine.dispose()
+    return 1 if failures else 0
 
 
 def executar(argv: Sequence[str] | None = None) -> int:
@@ -773,6 +1219,10 @@ def executar(argv: Sequence[str] | None = None) -> int:
         return ipeaia_models(settings)
     if args.command == "ipeaia-triagem":
         return ipeaia_triage(args, settings)
+    if args.command == "ipeaia-comunicacoes-preparar":
+        return ipeaia_communications_prepare(args, settings)
+    if args.command == "ipeaia-comunicacoes-importar":
+        return ipeaia_communications_import(args, settings)
     if args.command == "documentos-publicos":
         return collect_public_documents(args, settings)
     if args.command == "documentos-publicados":
@@ -781,6 +1231,12 @@ def executar(argv: Sequence[str] | None = None) -> int:
         return collect_tnu_search(args, settings)
     if args.command == "trf5-pesquisa":
         return collect_trf5_search(args, settings)
+    if args.command == "trf6-pesquisa":
+        return collect_trf6_search(args, settings)
+    if args.command == "trf4-pesquisa":
+        return collect_trf4_search(args, settings)
+    if args.command == "trf2-pesquisa":
+        return collect_trf2_search(args, settings)
     if args.command == "cjf-amostra":
         return collect_cjf_sample(args, settings)
     if args.command == "converter-arquivo-trf1":
@@ -815,6 +1271,8 @@ def executar(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command in ("inss-indeferimentos", "inss-concessoes"):
         return collect_inss_benefits(args, settings)
+    if args.command == "mds-censo-suas":
+        return collect_mds_censo_suas(args, settings)
     if args.command == "verificar-arquivo-trf1":
         store = PostgresStore(settings.database_url)
         run = store.start_collection("trf1_arquivo", "acesso", {"url": "https://arquivo.trf1.jus.br/"})

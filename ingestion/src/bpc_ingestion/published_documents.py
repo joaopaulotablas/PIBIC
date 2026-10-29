@@ -35,7 +35,54 @@ def official_url(value: str) -> tuple[str, str, str]:
         identifier = query.get("tmp.id_documento", [""])[0]
         if set(query) == {"tmp.id_documento"} and re.fullmatch(r"\d{1,100}", identifier):
             return "trf5_jurisprudencia", identifier, f"https://{url.hostname}{url.path}?{urlencode({'tmp.id_documento': identifier})}"
-    raise ValueError("URL fora das rotas públicas TNU/TRF3/TRF5 permitidas")
+    if url.hostname == "eproc-jur.trf6.jus.br" and url.path == "/eproc/externo_controlador.php":
+        action = "jurisprudencia@jurisprudencia/download_inteiro_teor"
+        identifier = query.get("id_jurisprudencia", [""])[0]
+        if set(query) <= {"acao", "id_jurisprudencia", "termosPesquisados"} and query.get("acao") == [action] and re.fullmatch(r"\d{1,100}", identifier):
+            highlight = query.get("termosPesquisados")
+            if highlight is not None:
+                import base64
+                if len(highlight) != 1 or len(highlight[0]) > 2048:
+                    raise ValueError("Realce TRF6 invÃ¡lido")
+                try:
+                    base64.b64decode(highlight[0], validate=True)
+                except ValueError as exc:
+                    raise ValueError("Realce TRF6 nÃ£o Ã© base64 vÃ¡lido") from exc
+            canonical = f"https://{url.hostname}{url.path}?{urlencode({'acao': action, 'id_jurisprudencia': identifier})}"
+            return "trf6_jurisprudencia", identifier, canonical
+    if url.hostname == "jurisprudencia.trf4.jus.br" and url.path == "/eproc2trf4/externo_controlador.php":
+        action = "jurisprudencia@jurisprudencia/download_inteiro_teor"
+        identifier = query.get("id_jurisprudencia", [""])[0]
+        if (set(query) <= {"acao", "id_jurisprudencia", "termosPesquisados"}
+                and query.get("acao") == [action] and re.fullmatch(r"\d{1,100}", identifier)):
+            highlight = query.get("termosPesquisados")
+            if highlight is not None:
+                import base64
+                if len(highlight) != 1 or len(highlight[0]) > 2048:
+                    raise ValueError("Realce TRF4 invalido")
+                try:
+                    base64.b64decode(highlight[0], validate=True)
+                except ValueError as exc:
+                    raise ValueError("Realce TRF4 nao e base64 valido") from exc
+            canonical = f"https://{url.hostname}{url.path}?{urlencode({'acao': action, 'id_jurisprudencia': identifier})}"
+            return "trf4_jurisprudencia", identifier, canonical
+    if url.hostname == "eproc.trf2.jus.br" and url.path == "/eproc/externo_controlador.php":
+        action = "jurisprudencia@jurisprudencia/download_inteiro_teor"
+        identifier = query.get("id_jurisprudencia", [""])[0]
+        if (set(query) <= {"acao", "id_jurisprudencia", "termosPesquisados"}
+                and query.get("acao") == [action] and re.fullmatch(r"\d{1,100}", identifier)):
+            highlight = query.get("termosPesquisados")
+            if highlight is not None:
+                import base64
+                if len(highlight) != 1 or len(highlight[0]) > 2048:
+                    raise ValueError("Realce TRF2 invalido")
+                try:
+                    base64.b64decode(highlight[0], validate=True)
+                except ValueError as exc:
+                    raise ValueError("Realce TRF2 nao e base64 valido") from exc
+            canonical = f"https://{url.hostname}{url.path}?{urlencode({'acao': action, 'id_jurisprudencia': identifier})}"
+            return "trf2_jurisprudencia", identifier, canonical
+    raise ValueError("URL fora das rotas públicas TNU/TRF2/TRF3/TRF4/TRF5/TRF6 permitidas")
 
 
 def _number(text: str) -> str:
@@ -56,7 +103,9 @@ def _document(source, identifier, url, number, text, kind, *, ementa=None, decis
     if cnj is None:
         payload.update(numero_origem=number, formato_numero_origem="legado_sem_cnj")
     return {"fonte": source, "documento_id": identifier,
-            "tribunal": {"tnu": "TNU", "trf3_jurisprudencia": "TRF3", "trf5_jurisprudencia": "TRF5"}[source],
+            "tribunal": {"tnu": "TNU", "trf2_jurisprudencia": "TRF2", "trf3_jurisprudencia": "TRF3",
+                         "trf4_jurisprudencia": "TRF4",
+                         "trf5_jurisprudencia": "TRF5", "trf6_jurisprudencia": "TRF6"}[source],
             "tipo_documento": kind, "numero_origem": number, "numeros_cnj": [cnj] if cnj else [],
             "texto": text, "ementa": ementa, "decisao": None,
             "data_decisao": decision_date, "data_publicacao": None,
@@ -64,7 +113,7 @@ def _document(source, identifier, url, number, text, kind, *, ementa=None, decis
             "payload": payload}
 
 
-def published_documents(body: bytes, url: str) -> list[dict]:
+def published_documents(body: bytes, url: str, expected_number: str | None = None) -> list[dict]:
     source, identifier, canonical = official_url(url)
     check_blocked(body.decode("utf-8", errors="replace"))
     if not body.lstrip().startswith(b"<"):
@@ -82,7 +131,12 @@ def published_documents(body: bytes, url: str) -> list[dict]:
             headings = article.select(".identificacao_processo")
             if header is None or not headings or not re.fullmatch(r"\d+_1", header.get("id", "")):
                 raise ValueError("Artigo TNU sem identidade estável e cabeçalho CNJ")
-            number = _number(" ".join(h.get_text(" ", strip=True) for h in headings))
+            # Real TNU complaints label both their own and original proceeding.
+            # Only the explicit primary segment identifies this document.
+            primary = [re.split(r"\bPROCESSO\s+ORIGIN[ÁA]RIO\s*:",
+                                h.get_text(" ", strip=True), maxsplit=1,
+                                flags=re.IGNORECASE)[0] for h in headings]
+            number = _number(" ".join(primary))
             doc_id = header["id"].removesuffix("_1")
             if doc_id in seen:
                 raise ValueError("Identificador de artigo TNU repetido")
@@ -128,6 +182,49 @@ def published_documents(body: bytes, url: str) -> list[dict]:
         return [_document(source, identifier, canonical, number, text, "Documento de jurisprudência",
                           ementa=ementa, decision_date=public_date(dates[0]) if len(dates) == 1 else None)]
     # TRF3 identifica o processo no cabeçalho anterior ao RELATÓRIO.
+    if source == "trf6_jurisprudencia":
+        soup = BeautifulSoup(body.decode("iso-8859-1"), "html.parser")
+        content = soup.body
+        if (content is None or soup.title is None
+                or not soup.title.get_text(" ", strip=True).startswith("Documento:")):
+            raise ValueError("Layout TRF6 sem documento publicado reconhecido")
+        text = content.get_text("\n", strip=True)
+        header = re.split(r"\n(?:PROCESSO ORIGIN\w*|RELAT[\u00d3O]RIO|VOTO|EMENTA|AC[\u00d3O]RD[\u00c3A]O|DESPACHO/DECIS[\u00c3A]O)\s*\n", text, maxsplit=1, flags=re.I)[0]
+        header_numbers = {cnj_number(match) for match in re.findall(CNJ, header)}
+        header_numbers.discard(None)
+        if expected_number is not None:
+            expected_number = cnj_number(expected_number)
+            if expected_number is None or expected_number not in header_numbers:
+                raise ValueError("CNJ da busca TRF6 nao confere com o cabecalho do documento")
+            number = expected_number
+        else:
+            number = _number(header)
+        if not bpc_text({"ementa": text}):
+            return []
+        heading = re.search(r"\n(AC\u00d3RD\u00c3O|DECIS\u00c3O MONOCR\u00c1TICA|DESPACHO/DECIS\u00c3O|S\u00daMULA)\n", text, re.I)
+        kind = heading.group(1).title() if heading else "Documento de jurisprudÃªncia"
+        return [_document(source, identifier, canonical, number, text, kind)]
+    if source in {"trf2_jurisprudencia", "trf4_jurisprudencia"}:
+        soup = BeautifulSoup(body.decode("iso-8859-1"), "html.parser")
+        if soup.title is None or not soup.title.get_text(" ", strip=True).startswith("Documento:") or soup.body is None:
+            raise ValueError(f"Layout {source} sem documento publicado reconhecido")
+        text = soup.body.get_text("\n", strip=True)
+        header = re.split(r"\n(?:RELAT[ÓO]RIO|VOTO|EMENTA|AC[ÓO]RD[ÃA]O|DECIS[ÃA]O)\s*\n",
+                          text, maxsplit=1, flags=re.I)[0]
+        header_numbers = {cnj_number(match) for match in re.findall(CNJ, header)}
+        header_numbers.discard(None)
+        if expected_number is not None:
+            expected_number = cnj_number(expected_number)
+            if expected_number is None or expected_number not in header_numbers:
+                raise ValueError(f"CNJ do card {source} nao confere com o cabecalho do documento")
+            number = expected_number
+        else:
+            number = _number(header)
+        if not bpc_text({"ementa": text}):
+            return []
+        heading = re.search(r"\n(AC[ÓO]RD[ÃA]O|DECIS[ÃA]O MONOCR[ÁA]TICA|VOTO|S[ÚU]MULA)\s*\n", text, re.I)
+        kind = heading.group(1).title() if heading else "Documento de jurisprudencia"
+        return [_document(source, identifier, canonical, number, text, kind)]
     content = soup.body
     if content is None:
         raise ValueError("Layout TRF3 sem corpo HTML")

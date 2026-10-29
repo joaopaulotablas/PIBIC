@@ -29,6 +29,53 @@ from bpc_ingestion.public_sources import (ArchiveClient, CjfClient, SourceBlocke
 
 
 class PublicSourcesTest(unittest.TestCase):
+    def test_trf6_privacy_pending_redacts_text_and_source_url_from_panel_api(self):
+        document = SimpleNamespace(id=1, fonte="trf6_jurisprudencia", documento_id="123",
+            tipo_documento="Acórdão", tribunal="TRF6", numero_origem="6000000-00.2026.4.06.0000",
+            numeros_cnj=["6000000-00.2026.4.06.0000"], ementa="nome e detalhes pessoais",
+            decisao="dados pessoais", texto="inteiro teor com dados pessoais", payload={"extracao_texto": "html_publicado"},
+            data_publicacao=None, data_decisao=None, url_origem="https://eproc-jur.trf6.jus.br/doc",
+            recurso_url="https://eproc-jur.trf6.jus.br/doc", hash_conteudo="a" * 64, coletado_em=None)
+        result = api.public_document_json(document)
+        self.assertEqual(result["revisao_privacidade"], "pendente")
+        self.assertIsNone(result["texto"])
+        self.assertIsNone(result["ementa"])
+        self.assertIsNone(result["decisao"])
+        self.assertIsNone(result["url_origem"])
+        panel = (api.STATIC_DIR / "documentos.html").read_text(encoding="utf-8")
+        self.assertIn('value="trf6_jurisprudencia"', panel)
+        self.assertIn('value="trf4_jurisprudencia"', panel)
+        self.assertIn('value="trf2_jurisprudencia"', panel)
+        self.assertIn("Conteúdo e link retidos até revisão de privacidade/ética", panel)
+
+    def test_trf4_privacy_pending_redacts_text_and_source_url_from_panel_api(self):
+        document = SimpleNamespace(id=2, fonte="trf4_jurisprudencia", documento_id="123",
+            tipo_documento="Acórdão", tribunal="TRF4", numero_origem="5000000-00.2026.4.04.0000",
+            numeros_cnj=["5000000-00.2026.4.04.0000"], ementa="detalhes pessoais",
+            decisao="dados pessoais", texto="inteiro teor com dados pessoais", payload={"extracao_texto": "html_publicado"},
+            data_publicacao=None, data_decisao=None, url_origem="https://jurisprudencia.trf4.jus.br/doc",
+            recurso_url="https://jurisprudencia.trf4.jus.br/doc", hash_conteudo="b" * 64, coletado_em=None)
+        result = api.public_document_json(document)
+        self.assertEqual(result["revisao_privacidade"], "pendente")
+        self.assertIsNone(result["texto"])
+        self.assertIsNone(result["ementa"])
+        self.assertIsNone(result["decisao"])
+        self.assertIsNone(result["url_origem"])
+
+    def test_trf2_privacy_pending_redacts_text_and_source_url_from_panel_api(self):
+        document = SimpleNamespace(id=3, fonte="trf2_jurisprudencia", documento_id="123",
+            tipo_documento="Acórdão", tribunal="TRF2", numero_origem="5001234-56.2025.4.02.5101",
+            numeros_cnj=["5001234-56.2025.4.02.5101"], ementa="detalhes pessoais",
+            decisao="dados pessoais", texto="inteiro teor com dados pessoais", payload={"extracao_texto": "html_publicado"},
+            data_publicacao=None, data_decisao=None, url_origem="https://eproc.trf2.jus.br/doc",
+            recurso_url="https://eproc.trf2.jus.br/doc", hash_conteudo="c" * 64, coletado_em=None)
+        result = api.public_document_json(document)
+        self.assertEqual(result["revisao_privacidade"], "pendente")
+        self.assertIsNone(result["texto"])
+        self.assertIsNone(result["ementa"])
+        self.assertIsNone(result["decisao"])
+        self.assertIsNone(result["url_origem"])
+
     def test_stj_schema_and_no_link_from_short_number(self):
         item = {"id": "1459483", "numeroProcesso": "3126923", "ementa": "Benefício assistencial BPC",
                 "decisao": "Recurso não provido", "dataPublicacao": "DJEN DATA:18/08/2026"}
@@ -239,7 +286,8 @@ class PublicSourcesTest(unittest.TestCase):
             store.close()
             html = f'''<div id="item_resultado-12"><div class="ui-outputpanel">
                 <tr><td>Numero</td></tr><tr><td>{number}</td></tr></div></div>'''.encode()
-            args = SimpleNamespace(limit=1, base="JEF1", paginas=2, timeout=60, retentar=False, raw_dir=work)
+            args = SimpleNamespace(limit=1, base="JEF1", paginas=2, timeout=60,
+                                   retentar=False, raw_dir=work, manifest=None)
             with patch("bpc_ingestion.cli.CjfClient") as client:
                 client.documents.side_effect = CjfClient.documents
                 client.return_value.pages.return_value = [(html, html)]

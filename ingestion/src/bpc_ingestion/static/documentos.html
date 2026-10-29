@@ -3,7 +3,7 @@
 <style>body{font:16px system-ui;background:#f5f7fb;color:#18263a;max-width:1050px;margin:30px auto;padding:20px}article{background:white;border:1px solid #d8dfeb;border-radius:8px;padding:20px;margin:20px 0}pre{white-space:pre-wrap;font:inherit;line-height:1.6}input,select,button{font:inherit;padding:8px;margin:4px}small{color:#52657a}a{color:#155ab0}</style>
 <a href="/admin/processos">← Processos da amostra</a><h1>Documentos públicos complementares</h1>
 <p>Este corpus não é a amostra de concessões iniciais DF/RIDE. Um documento pode pertencer a outra região ou instância. Textos locais podem conter dados pessoais; não publique exportações brutas.</p>
-<form id="filter"><select id="source"><option value="">Todas as fontes</option><option value="stj">STJ</option><option value="cjf_trf1">CJF — TRF1/JEF1</option><option value="trf1_arquivo">Arquivo TRF1</option><option value="tnu">TNU</option><option value="trf3_jurisprudencia">TRF3 — publicados</option><option value="trf5_jurisprudencia">TRF5 — jurisprudência</option></select><input id="query" placeholder="Texto ou número do processo"><button>Pesquisar</button></form>
+<form id="filter"><select id="source"><option value="">Todas as fontes</option><option value="pje_trf1">PJe — TRF1 consulta pública</option><option value="stj">STJ</option><option value="cjf_trf1">CJF — TRF1/JEF1</option><option value="trf1_arquivo">Arquivo TRF1</option><option value="tnu">TNU</option><option value="trf2_jurisprudencia">TRF2 — jurisprudência</option><option value="trf3_jurisprudencia">TRF3 — publicados</option><option value="trf4_jurisprudencia">TRF4 — jurisprudência</option><option value="trf5_jurisprudencia">TRF5 — jurisprudência</option><option value="trf6_jurisprudencia">TRF6 — jurisprudência</option></select><input id="query" placeholder="Texto ou número do processo"><button>Pesquisar</button></form>
 <p id="status" role="status"></p><main id="results"></main><button id="prev">Anterior</button><button id="next">Próxima</button>
 <section><h2>Indeferimentos administrativos do INSS — DF</h2><p>Contexto administrativo, sem ligação automática com processos. Mostra o último snapshot de cada competência.</p><div id="inss"></div></section>
 <section><h2>Concessões administrativas do INSS — DF</h2><p>Benefícios concedidos por espécie e despacho publicado. Não são pessoas únicas nem taxa de procedência judicial. Mostra o último snapshot de cada competência.</p><div id="grants"></div></section>
@@ -25,14 +25,15 @@ async function load(){
       const card=add(el('results'),'article','');
       add(card,'h2',`${item.tribunal||item.fonte} · ${item.tipo_documento||'Documento'} · ${item.numero_origem||item.documento_id}`);
       add(card,'small',`${item.fonte} · publicado em ${item.data_publicacao||'data não informada'} · CNJ explícito: ${item.numeros_cnj.join(', ')||'não informado; sem vínculo automático'}`);
+      if(item.revisao_privacidade==='pendente')add(card,'p','Conteúdo e link retidos até revisão de privacidade/ética; documento armazenado apenas localmente e não enviado à IA.');
       if(item.extracao_texto==='pendente')add(card,'p','Arquivo original baixado. Texto pendente de conversão DOC ou OCR TIFF; ainda não analisável pela IA.');
       if(item.extracao_texto==='texto_simples')add(card,'p','Texto simples publicado pela fonte, sem OCR. Ainda depende de revisão humana.');
       if(item.extracao_texto==='doc_legacy_preliminar')add(card,'p','Texto extraído localmente de DOC antigo. Conversão preliminar, sem garantia de integridade; revisão humana necessária.');
       for(const [label,text] of [['Ementa',item.ementa],['Decisão publicada',item.decisao],['Texto publicado',item.texto]]){
         if(text){const details=add(card,'details','');add(details,'summary',label);add(details,'pre',text);}
       }
-      const url=new URL(item.url_origem);
-      if(url.protocol==='https:'){const link=add(card,'a','Abrir fonte oficial');link.href=url;link.target='_blank';link.rel='noopener noreferrer';}
+      if(item.url_origem){const url=new URL(item.url_origem);
+        if(url.protocol==='https:'){const link=add(card,'a','Abrir fonte oficial');link.href=url;link.target='_blank';link.rel='noopener noreferrer';}}
     }
     el('prev').disabled=offset===0; el('next').disabled=offset+20>=total;
   }catch(error){el('status').textContent=error.message;}

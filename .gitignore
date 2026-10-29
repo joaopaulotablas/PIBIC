@@ -5,6 +5,7 @@ data/
 **/.pytest_cache/
 **/*.egg-info/
 ingestion/.state/
+.state/
 
 # Bancos, checkpoints e arquivos temporarios locais
 *.db
@@ -26,3 +27,9 @@ jeferson/bpc-loas/dados_trfs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Pacotes de trabalho com textos de comunicações: transferir sob controle; não versionar
+transferencia/bpc-consolidado-luna-*.sqlite.gz
+# Exceção exata para a transferência via Git solicitada pelo pesquisador.
+# Contém textos públicos não anonimizados; não usar como autorização genérica.
+!transferencia/bpc-consolidado-luna-20261008-corrigido.sqlite.gz

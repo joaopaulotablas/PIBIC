@@ -21,6 +21,21 @@ HEADER = ('Competência concessão', 'Espécie', 'Espécie', 'Despacho', 'Despac
 
 
 class ConcessionsTest(unittest.TestCase):
+    def test_multi_state_equals_union_and_validates_non_target_period(self):
+        data = [HEADER, (202608, 87, 'BPC', 4, 'Rótulo', 'DF'),
+                (202608, 88, 'BPC', 0, 'Rótulo', 'Goiás')]
+        multi, quality = aggregate_concession_rows(iter(data), ['GO', 'DF', 'GO'], 202608)
+        expected = Counter()
+        for state in ('DF', 'GO'):
+            expected.update(aggregate_concession_rows(iter(data), state, 202608)[0])
+        self.assertEqual(multi, expected)
+        self.assertEqual(quality['selecionadas_por_uf'], {'DF': 1, 'GO': 1})
+        with self.assertRaises(ValueError):
+            aggregate_concession_rows(iter([HEADER, (202607, 31, 'Outro', 0, 'Rótulo', 'SP')]),
+                                      ['DF', 'GO'], 202608)
+        with self.assertRaises(ValueError):
+            aggregate_concession_rows(iter(data), [], 202608)
+
     def test_actual_header_pair_codes_filters_and_no_individual_data(self):
         rows = iter([('Título',), HEADER, (202608, 87, 'BPC', 4, 'Descrição oficial', 'Distrito Federal', 'privado'),
                      (202608, 88, 'BPC', 0, 'Outra descrição', 'DF', 'privado'),

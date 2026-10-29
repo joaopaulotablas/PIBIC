@@ -377,3 +377,25 @@ class IndicadorInssConcessao(Base):
     hash_arquivo: Mapped[str] = mapped_column(String(64), nullable=False)
     coleta_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("coletas.id"), nullable=False)
     coletado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IndicadorSuasMunicipio(Base):
+    __tablename__ = "indicadores_suas_municipio"
+    __table_args__ = (
+        UniqueConstraint("ano", "tipo_unidade", "codigo_ibge", "hash_arquivo",
+                         name="uq_suas_municipio_versao"),
+        Index("ix_suas_municipio_ano_uf", "ano", "uf"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    fonte: Mapped[str] = mapped_column(String(30), nullable=False, default="mds_censo_suas")
+    ano: Mapped[int] = mapped_column(Integer, nullable=False)
+    tipo_unidade: Mapped[str] = mapped_column(String(40), nullable=False)
+    codigo_ibge: Mapped[str] = mapped_column(String(7), nullable=False)
+    municipio_nome: Mapped[str] = mapped_column(Text, nullable=False)
+    uf: Mapped[str] = mapped_column(String(2), nullable=False)
+    quantidade_unidades: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    url_origem: Mapped[str] = mapped_column(Text, nullable=False)
+    arquivo_bruto: Mapped[str] = mapped_column(Text, nullable=False)
+    hash_arquivo: Mapped[str] = mapped_column(String(64), nullable=False)
+    coleta_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("coletas.id"), nullable=False)
+    coletado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

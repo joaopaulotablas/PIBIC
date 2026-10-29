@@ -48,13 +48,18 @@ Tribunal = Literal["TRF1", "TRF2", "TRF3", "TRF4", "TRF5", "TRF6", "STJ"]
 
 
 def public_document_json(item: DocumentoPublico) -> dict[str, Any]:
+    privacy_pending = item.fonte in {"pje_trf1", "trf2_jurisprudencia", "trf4_jurisprudencia", "trf6_jurisprudencia"}
     return {"id": item.id, "fonte": item.fonte, "documento_id": item.documento_id,
             "tipo_documento": item.tipo_documento, "tribunal": item.tribunal,
             "numero_origem": item.numero_origem, "numeros_cnj": item.numeros_cnj,
-            "ementa": item.ementa, "decisao": item.decisao, "texto": item.texto,
+            "ementa": None if privacy_pending else item.ementa,
+            "decisao": None if privacy_pending else item.decisao,
+            "texto": None if privacy_pending else item.texto,
+            "revisao_privacidade": "pendente" if privacy_pending else None,
             "extracao_texto": (item.payload or {}).get("extracao_texto"),
             "data_publicacao": item.data_publicacao, "data_decisao": item.data_decisao,
-            "url_origem": item.url_origem, "recurso_url": item.recurso_url,
+            "url_origem": None if privacy_pending else item.url_origem,
+            "recurso_url": None if privacy_pending else item.recurso_url,
             "hash_conteudo": item.hash_conteudo, "coletado_em": item.coletado_em}
 
 

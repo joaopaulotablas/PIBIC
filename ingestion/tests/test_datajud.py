@@ -65,6 +65,23 @@ class NormalizacaoTest(unittest.TestCase):
         self.assertEqual(processo["data_ajuizamento"], "2021-12-15T08:05:50.000Z")
         self.assertEqual(processo["movimentacoes"][0]["complementos"][0]["valor"], 2)
 
+    def test_achata_assuntos_aninhados_sem_descartar_codigo_sem_nome(self):
+        source = {
+            **SOURCE,
+            "assuntos": [
+                [{"codigo": 11946, "nome": "Deficiente"}],
+                {"codigo": 15516},
+            ],
+        }
+        processo = normalizar_processo(source, "2026-08-11T00:00:00.000Z")
+        self.assertEqual(
+            processo["assuntos"],
+            [
+                {"codigo": 11946, "nome": "Deficiente"},
+                {"codigo": 15516, "nome": None},
+            ],
+        )
+
     def test_cria_conteudo_limitado_as_movimentacoes(self):
         processo = normalizar_processo(SOURCE, "2026-08-11T00:00:00.000Z")
         conteudo = criar_conteudo_de_movimentacoes(processo, processo["coletado_em"])

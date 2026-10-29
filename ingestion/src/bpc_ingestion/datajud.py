@@ -127,10 +127,24 @@ def _normalizar_complemento(complemento: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _iterar_assuntos(valor: Any) -> Iterator[dict[str, Any]]:
+    """Achata a lista de assuntos do DataJud sem alterar o payload Bronze.
+
+    Em alguns hits, o DataJud aninha uma lista de assuntos dentro da lista
+    externa. Objetos com apenas ``codigo`` também são válidos; a denominação
+    pode ser completada pela TPU, sem inventá-la na ingestão.
+    """
+    if isinstance(valor, dict):
+        yield valor
+    elif isinstance(valor, list):
+        for item in valor:
+            yield from _iterar_assuntos(item)
+
+
 def normalizar_processo(source: dict[str, Any], coletado_em: str) -> dict[str, Any]:
     assuntos = [
         {"codigo": assunto.get("codigo"), "nome": repair_text(assunto.get("nome"))}
-        for assunto in source.get("assuntos", [])
+        for assunto in _iterar_assuntos(source.get("assuntos", []))
     ]
     movimentos = []
     for movimento in source.get("movimentos", []):

@@ -13,6 +13,33 @@ from bpc_ingestion.models import Base, Coleta, IndicadorInssIndeferimento
 
 
 class InssBenefitsTest(unittest.TestCase):
+    def test_cli_single_and_multiple_states_mutually_exclusive(self):
+        from bpc_ingestion.cli import construir_parser
+        parser = construir_parser()
+        args = parser.parse_args(['inss-indeferimentos', '--competencia', '202601', '--ufs', 'DF', 'GO', 'MG'])
+        self.assertEqual(args.ufs, ['DF', 'GO', 'MG'])
+        self.assertIsNone(args.uf)
+        single = parser.parse_args(['inss-concessoes', '--competencia', '202601', '--uf', 'DF'])
+        self.assertEqual(single.uf, 'DF')
+        self.assertIsNone(single.ufs)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(['inss-concessoes', '--competencia', '202601', '--uf', 'DF', '--ufs', 'GO'])
+
+    def test_multi_state_equals_single_unions_and_rejects_invalid(self):
+        from collections import Counter
+        multi, quality = aggregate_rows(self.rows(), ['DF', 'SP', 'DF'], 202608)
+        expected = Counter()
+        for state in ('DF', 'SP'):
+            expected.update(aggregate_rows(self.rows(), state, 202608)[0])
+        self.assertEqual(multi, expected)
+        self.assertEqual(quality['selecionadas_por_uf'], {'DF': 3, 'SP': 1})
+        for states in ([], ['DF', 'ZZ'], [True]):
+            with self.assertRaises(ValueError):
+                aggregate_rows(self.rows(), states, 202608)
+        with self.assertRaises(ValueError):
+            aggregate_rows(iter([['Competência indeferimento', 'Espécie', 'Motivo', 'UF'],
+                                 [202607, 31, 'Outro', 'SP']]), ['DF', 'GO'], 202608)
+
     def rows(self):
         return iter([
             ["INDEFERIDOS DADOS ABERTOS AGOSTO 2026"],

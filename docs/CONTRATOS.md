@@ -1,4 +1,4 @@
-# Contrato de dados BPC Jud — v0.9
+# Contrato de dados BPC Jud — v0.10
 
 Este documento substitui o contrato v0.1 baseado em SQLite/MongoDB.
 
@@ -6,14 +6,30 @@ Este documento substitui o contrato v0.1 baseado em SQLite/MongoDB.
 
 - DataJud: universo de processos e movimentos dos assuntos 6114, 11946 e 11947;
 - Comunica PJe: comunicações e atos publicados consultados por número CNJ;
+- PJe/TRF1 consulta pública: documentos HTML explicitamente disponibilizados
+  em `documentoSemLoginHTML.seam`, vinculados por CNJ e ID de documento conferidos;
 - TPU local: nomes e hierarquias de assuntos, classes e movimentos do CNJ.
 - CKAN/INSS: catálogo em `recursos_externos` e indeferimentos BPC agregados por
   competência, UF, espécie e motivo em `indicadores_inss_indeferimentos`.
-- CJF/TRF1/JEF1, STJ, TNU e TRF5: corpus complementar em `documentos_publicos`; vínculos
+- CJF/TRF1/JEF1, STJ, TNU, TRF2, TRF4, TRF5 e TRF6: corpus complementar em `documentos_publicos`; vínculos
   explícitos com a amostra em `documento_processos`, sem aumentar a população.
+- TJMG: registros DataJud suplementares por assunto e órgão julgador; não presumir
+  competência federal delegada nem residência no município do órgão.
 - Portal da Transparência/CGU: `GET /api-de-dados/bpc-por-municipio`, indicadores
   mensais agregados de BPC por código IBGE, autenticados pelo cabeçalho
   `chave-api-dados`. O token vem do ambiente, nunca do código ou do payload.
+- MDS/Censo SUAS: arquivos públicos anuais de unidades socioassistenciais,
+  agregados por código IBGE em `indicadores_suas_municipio`; não são dados de
+  requerentes BPC nem de processos.
+- MDS/VIS DATA: tempo médio regional de concessão do BPC e série anual de
+  beneficiários/valores por município pagador, ambos preservados localmente como
+  contexto agregado; não são processos nem provam residência dos litigantes.
+- IBGE/SIDRA: tabela 9514 do Censo 2022 (população por idade) para DF e
+  municípios oficialmente listados na RIDE; respostas preservadas localmente,
+  sem tabela Silver e sem vinculação a processos ou pessoas.
+- IBGE/SIDRA: tabelas 10131 (deficiência por grupo etário) e 10295 (rendimento
+  domiciliar per capita) do Censo 2022, coletadas para os mesmos 34 municípios
+  da RIDE; dados locais agregados, sem integração à Silver.
 
 ## Identidades
 
@@ -26,6 +42,19 @@ Este documento substitui o contrato v0.1 baseado em SQLite/MongoDB.
 ## Camadas
 
 ### Bronze
+
+Comunica (correção de 08/10/2026): cada resposta é um membro gzip completo.
+O coletor copia o arquivo anterior para temporário no mesmo diretório, acrescenta
+o membro, sincroniza os bytes e publica por substituição atômica antes da Silver.
+Formato continua NDJSON gzip e caminho da coleta permanece igual. Interrupção
+durante a próxima escrita não altera o último arquivo canônico completo; pode
+deixar temporário `.partial`, que não é uma resposta publicada. O modo é restrito
+ao Comunica porque copiar o arquivo a cada resposta tem custo crescente; usar
+lotes pequenos. Arquivos históricos truncados não são reparados nem sobrescritos.
+Ctrl+C encerra status `falhou`; encerramento forçado do processo não pode garantir
+atualização do status no banco, embora preserve a última Bronze publicada.
+Três falhas temporárias consecutivas ou um bloqueio encerram o lote, sem converter
+erro em vazio; retentativas internas por CNJ continuam limitadas.
 
 Respostas imutáveis em `data/raw/<fonte>/<particao>/<data>/<execucao>.ndjson.gz`.
 O conteúdo deve permanecer igual ao recebido.
@@ -50,9 +79,23 @@ PostgreSQL normalizado:
 - `documentos_publicos`, `documento_processos` (corpus complementar e vínculos).
 - `indicadores_inss_indeferimentos` (agregados administrativos, não processos).
 - `indicadores_inss_concessoes` (agregados de concessão por despacho, não processos).
+- `indicadores_suas_municipio` (Censo SUAS: contagens anuais de unidades
+  socioassistenciais por município, sem relação individual com processos ou
+  beneficiários).
 
 O payload bruto também fica em JSONB, mas os campos usados em filtros e junções
 devem possuir colunas tipadas.
+
+#### Variação real de `assuntos` no DataJud (07/10/2026)
+
+Um hit real do TRF1/G1 (vara de Goiânia) retornou `assuntos` como lista
+aninhada: `[[{"codigo":11946,"nome":"Deficiente"}],{"codigo":15516}]`.
+Bronze e `registros_datajud.payload` preservam o objeto recebido sem alteração.
+Na projeção normalizada, listas internas são achatadas recursivamente para a
+lista canônica de objetos `{codigo, nome}`; códigos sem nome permanecem com
+`nome: null` até eventual enriquecimento TPU. Não se infere nem se descarta o
+código. Isso não cria tabela nem altera o schema Silver; apenas torna o parser
+compatível com a variação observada. O bruto fica disponível para auditoria.
 
 ### Contrato de `indicadores_bpc_municipio`
 
@@ -88,6 +131,40 @@ As views iniciais são:
 Novas métricas devem registrar fórmula, população, tratamento de ausências e
 versão da pipeline.
 
+## Consolidação local de origens — 07/10/2026
+
+A união é produzida em um SQLite novo, com `Base.metadata` da aplicação; os
+bancos de origem são somente leitura. O arquivo `bpc-jud.sqlite.gz` em
+`transferencia/` é descompactado antes da leitura. Snapshots PostgreSQL devem
+ser exportados primeiro com `portable.copy_database`/`scripts/snapshot_database.py`.
+`SqliteStore`/`processos_raw` não participam desta união.
+
+Identidades de processo, DataJud, comunicação, documento, extração, indicador
+e associações usam as chaves lógicas descritas acima. IDs numéricos locais são
+remapeados e toda FK usa o mapa da origem; UUIDs de coleta/tarefa são mantidos
+quando livres. Para entidades sem chave de versão, conteúdo idêntico é contado
+como duplicata e conteúdo divergente na mesma identidade vira conflito
+explícito, com origem anterior e origem concorrente no relatório JSON. Mantém-se
+uma linha Silver por chave única; conflitos mutáveis não são mesclados por
+heurística nem sobrescritos silenciosamente. Documentos com hash diferente
+continuam versões distintas. Indicadores mensais com a mesma chave não são
+somados; divergências são relatadas como conflito.
+
+Na consolidação, `extracoes_ia` é processada depois dos registros DataJud.
+Referências `resultado.evidencias[].registro_id` são remapeadas pelo mapa da
+mesma origem e devem pertencer ao processo da extração no destino. ID ausente
+no mapa, não inteiro ou de outro processo rejeita a consolidação, inclusive
+no dry-run; nunca se usa coincidência de ID local como fallback. O relatório
+registra origem, PK da extração, posição da evidência e IDs original/destino.
+Texto, classificação, versão do prompt e demais campos não mudam; as origens
+preservam o resultado original. A comparação lógica de consolidações também
+normaliza essas referências pela identidade DataJud, não pelo ID numérico.
+
+Uma origem indisponível deve ser marcada fora do banco e não simulada. Referências
+Bronze são copiadas como texto, sem alegar que o arquivo existe. Um caminho
+ausente permanece indisponível e é enumerado no relatório da execução. A
+consolidação não promove automaticamente o SQLite novo à base do pesquisador.
+
 ## Complementação pública — contrato v0.6 (06/10/2026)
 
 As novas fontes NÃO ampliam silenciosamente a população de processos DataJud.
@@ -101,7 +178,7 @@ nome, número curto do STJ, similaridade de texto ou hipótese de recurso.
 | Campo | Tipo lógico | Regra |
 | --- | --- | --- |
 | `id` | bigint PK autogerado | Identificador local |
-| `fonte` | varchar(30) | `stj`, `cjf_trf1`, `trf1_arquivo`, `tnu`, `trf3_jurisprudencia`, `trf5_jurisprudencia` |
+| `fonte` | varchar(30) | `stj`, `cjf_trf1`, `trf1_arquivo`, `tnu`, `pje_trf1`, `trf2_jurisprudencia`, `trf3_jurisprudencia`, `trf4_jurisprudencia`, `trf5_jurisprudencia`, `trf6_jurisprudencia` |
 | `documento_id` | varchar(200) | ID estável da origem, nunca posição de página |
 | `hash_conteudo` | varchar(64) | SHA-256 do JSON normalizado do documento |
 | `tipo_documento`, `tribunal` | varchar(100), varchar(30) | Tipo e órgão, quando informados |
@@ -139,6 +216,85 @@ No PostgreSQL haverá migração aditiva; no SQLite a atualização cria somente
 novas tabelas, sem restaurar, apagar ou alterar extrações anteriores. A exportação
 portátil inclui as tabelas novas e cria tabelas vazias caso ausentes na cópia
 antiga; a ausência não pode ser tratada como dados coletados.
+
+### Consulta pública PJe/TRF1 — `pje_publico_v1` (08/10/2026)
+
+Descoberta confirmada: formulário público `fPP` em
+`https://pje1g-consultapublica.trf1.jus.br/consultapublica/ConsultaPublica/listView.seam`.
+A ação AJAX de pesquisa vem de `executarPesquisa=function`, não do ID do botão.
+O cliente só submete quando o JavaScript publicado indica explicitamente
+`if (false) { hcaptcha.execute(); ... }`; desafio ativado/widget/CAPTCHA interrompe
+a consulta. Não resolve, altera ou contorna CAPTCHA nem usa login ou credencial.
+Cookies/ViewState são efêmeros da sessão pública e não são exportados como credenciais.
+
+Segue apenas links `openPopUp` publicados no resultado do CNJ solicitado,
+no host HTTPS oficial: detalhe `DetalheProcessoConsultaPublica/listView.seam?ca=...`
+e documentos `documentoSemLoginHTML.seam?ca=...&idProcessoDoc=...` da tabela
+`processoDocumentoGridTab`. `ca` é o identificador opaco do link público publicado,
+não token institucional nem valor adivinhado. Identidade exige CNJ do resultado,
+CNJ rotulado no detalhe e CNJ no cabeçalho do documento e ID rotulado no documento
+iguais aos solicitados. Citações a outros processos não criam vínculos.
+Variação HTML observada em Formosa: admite também CNJ isolado na terceira linha
+do cabeçalho, imediatamente após `Juizado Especial ...` e `Subseção Judiciária ...`
+e antes de `PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL (436)` ou
+`CUMPRIMENTO DE SENTENÇA CONTRA A FAZENDA PÚBLICA (12078)` ou
+`MANDADO DE SEGURANÇA CÍVEL (120)`. A primeira linha pode ser também
+`Vara Federal Cível e Criminal da SSJ de Formosa-GO`. Essa assinatura de
+layout exige CNJ completo em elemento próprio e antes dos campos das partes;
+não aceita CNJ solto em qualquer posição, citação de precedente ou documento
+sem número. Número e ID da assinatura continuam conferidos contra o link.
+Outra assinatura observada: `Processo Judicial Eletrônico`, seguido imediatamente
+de `RECURSO INOMINADO CÍVEL (460) Nº <CNJ>` no cabeçalho. Esse documento de
+Turma Recursal preserva o número de origem; o grau DataJud não é alterado.
+Variação SJDF: entre `Processo Judicial Eletrônico` e o recurso, aparecem
+`Turmas Recursais dos Juizados Especiais Federais da SJDF` e `3ª Relatoria da
+1ª Turma Recursal da SJDF`; abreviação publicada `n.` é equivalente a `Nº`
+nesse campo rotulado. O número continua anterior aos dados das partes.
+Admite ainda `Seção Judiciária ...`, `<n>ª Vara Federal de Juizado Especial
+Cível da SJ<UF>`, CNJ isolado e `AUTOR:` nas primeiras quatro linhas.
+Foi observado número de origem do Tocantins entre candidatos cujo órgão atual
+DataJud está no recorte: isso NÃO comprova DF/RIDE nem residência. O documento
+permanece vinculado ao seu próprio CNJ, sem alterar a população ou geografia.
+Layout Luziânia observado: primeiras linhas `PODER JUDICIÁRIO`, `JUSTIÇA
+FEDERAL`, `Seção Judiciária do Estado de Goiás`, `JUIZADO ESPECIAL FEDERAL -
+SUBSEÇÃO JUDICIÁRIA DE LUZIÂNIA`, `SENTENÇA TIPO "C"`, seguidas de CNJ isolado.
+Somente essa assinatura de cabeçalho autoriza número sem rótulo nesse formato.
+Formosa também publica `PODER JUDICIÁRIO`, `JUSTIÇA FEDERAL`, `Subseção
+Judiciária de Formosa-GO`, `Juizado Especial Cível e Criminal Adjunto à Vara
+Federal da SSJ de Formosa-GO`, seguidos de CNJ isolado; aceita-se essa assinatura.
+Assinaturas estruturadas têm precedência sobre texto de rótulo. Rótulo
+`PROCESSO` deve iniciar linha no cabeçalho anterior aos campos de partes/relator;
+`processo nº` em narrativa ou precedente não é identidade do documento.
+Documento composto antigo também apresentou, depois do voto, bloco institucional
+`JUSTIÇA FEDERAL` / `SEÇÃO JUDICIÁRIA DO ESTADO DE GOIÁS` / `PRIMEIRA TURMA
+RECURSAL DOS JUIZADOS ESPECIAIS FEDERAIS` / `GABINETE DA 3ª RELATORIA` /
+`RECURSO JEF Nº <CNJ>`. Admite-se somente bloco único com essa assinatura,
+CNJ completo no elemento `strong` próprio, fora de `blockquote`, e ID da
+assinatura igual ao link. Não selecionar número avulso pelo deslocamento no
+corpo; uma citação sem esse bloco institucional não comprova identidade.
+
+Importa somente descritores publicados Sentença/Decisão/Despacho/Acórdão;
+outros tipos (petições, comprovantes, certidões) não são o alvo desta coleta.
+Não baixa PDF, não pagina documentos nesta versão, não declara autos completos.
+Limite/primeira página e quantidade de links são registrados. Vazio da pesquisa
+exige indicação explícita do portal; detalhe encontrado sem documento alvo tem
+status `sem_documentos`, diferente de ausência de processo ou erro.
+
+Usa `documentos_publicos` existente: `fonte=pje_trf1`, `documento_id=idProcessoDoc`,
+`numeros_cnj=[CNJ confirmado]`, `tipo_documento` conforme rótulo publicado,
+`texto` do elemento `.folha` sem scripts/estilos. Ementa/decisão/data_decisão e
+data_publicação permanecem nulas; data da linha é juntada, não presumida decisão.
+Payload normalizado: ID, CNJ, tipo, texto, `extracao_texto=pje_html_publico`,
+`versao_parser=pje_publico_v1`, `revisao_privacidade=pendente`.
+URL de origem é a consulta pública; recurso_url é o link efetivamente publicado.
+Bronze original antes do parser, chave de versão e `store_document` existentes;
+somente CNJ explícito permite vínculo a processo já existente, sem nova população.
+
+`coletas.fonte=pje_trf1_publico`, partição `<CNJ>/v1`, parâmetros com limites,
+CNJ e parser. Sucesso/vazio/sem_documentos são pulados na retomada; erro ou
+bloqueio encerra o lote. Sem documentos novos no piloto, não ampliar automaticamente.
+Texto/ementa/decisão/link retidos na API enquanto privacidade pendente, e nenhum
+envio automático à IpeaIA. Sem migração ou alteração das tabelas.
 
 ### `indicadores_inss_indeferimentos`
 
@@ -195,7 +351,32 @@ Não classificar despacho como concessão judicial sem dicionário e validação
 nem atribuir despacho a processo. A tabela é aditiva, compatível SQLite/PG;
 cópias antigas sem a tabela ganham tabela vazia, sem dados inventados.
 
-### Documentos HTML publicados TNU/TRF3/TRF5 — v0.8
+### `indicadores_suas_municipio` — Censo SUAS v0.10
+
+Indicadores contextuais anuais de oferta de serviços socioassistenciais, não
+processos, pessoas, beneficiários de BPC nem medidas de cobertura individual.
+Na primeira importação, somente os arquivos públicos Censo SUAS 2025 de CRAS
+e Postos de Cadastramento do Cadastro Único são usados. Uma linha é a contagem
+de identificadores de unidades distintos (`NU_IDENTIFICADOR`) por município,
+não contagem de trabalhadores, atendimentos ou usuários. Não criar linhas zero
+para município ausente no arquivo.
+
+Campos: `id` bigint PK; `fonte` varchar(30) = `mds_censo_suas`;
+`ano` integer; `tipo_unidade` varchar(40) (`cras` ou `posto_cadastramento`);
+`codigo_ibge` varchar(7), `municipio_nome` text e `uf` varchar(2) conforme
+CSV oficial; `quantidade_unidades` bigint; `url_origem` text;
+`arquivo_bruto` text; `hash_arquivo` varchar(64) SHA-256 do ZIP original;
+`coleta_id` UUID FK `coletas`; `coletado_em` timestamp UTC. Chave única:
+`ano + tipo_unidade + codigo_ibge + hash_arquivo`; um ZIP revisado gera nova
+versão, sem somar snapshots. Só é consumido o CSV `Dados Gerais`; arquivos de
+recursos humanos e sintaxes SPSS presentes nos ZIPs não são importados para a
+Silver. Fonte oficial: [Censo SUAS — Bases e Resultados]
+(https://aplicacoes.mds.gov.br/sagi/snas/vigilancia/index2). Os arquivos são
+contexto territorial e não autorizam inferir perfil de parte, residência ou
+fundamento de decisão a partir do município do órgão julgador. Tabela aditiva,
+compatível com PostgreSQL e SQLite; cópias antigas podem criar a tabela vazia.
+
+### Documentos HTML publicados TNU/TRF3/TRF5/TRF6 — v0.9
 
 `documentos-publicados --urls <links oficiais>` aceita até 50 URLs explícitas
 das rotas de documento verificadas. Não inventa IDs, não enumera números de
@@ -209,7 +390,14 @@ aceito após reconhecimento do layout; HTML de erro é falha, não ausência.
 Usa as mesmas tabelas `documentos_publicos`/`documento_processos`, sem migração.
 Na TNU, cada `article` tem ID explícito em `header[id=<id>_1]`; esse ID, não
 o ID de pesquisa da URL, é `documento_id`. O CNJ vem exclusivamente de
-`.identificacao_processo` do artigo. No TRF3, o ID vem da URL oficial e o CNJ
+`.identificacao_processo` do artigo. Cabeçalho real de Reclamação pode incluir
+também `PROCESSO ORIGINÁRIO: Nº ...`: nesse layout, o CNJ principal é extraído
+somente do segmento anterior ao rótulo explícito, em cada elemento de
+identificação. Deve haver um único CNJ principal coerente entre os elementos;
+números sem essa separação rotulada continuam rejeitados. O originário permanece
+no texto/Bronze, não cria vínculo e não substitui o processo principal.
+Extensão compatível de `publicados_html_v1`, sem reescrever documentos anteriores.
+No TRF3, o ID vem da URL oficial e o CNJ
 do cabeçalho anterior a RELATÓRIO. No TRF5, o ID vem de `tmp.id_documento`, o
 CNJ do campo `Processo` em `td.grid` e a data do campo `Data de Julgamento`.
 Números citados nos votos/precedentes não criam vínculos. O parser só guarda
@@ -281,7 +469,43 @@ versões novas e limite atingido. Cada URL tem sua coleta `tnu` e transação;
 sucessos persistem se um documento posterior falhar. A ordem pública pode
 mudar entre execuções; não declarar completude nem amostra representativa.
 
+### Jurisprudência publicada TRF6 — v0.9
+
+O formulário público eproc-jur do [TRF6](https://eproc-jur.trf6.jus.br/eproc/) permite pesquisa em inteiro teor, sem autenticação. `trf6-pesquisa` lê as origens rotuladas no próprio HTML (`TRF6`, `TRU6`, `Turmas Recursais`, `Varas Federais`), pagina pelos controles `hdnPaginaAtual`/`hdnTotal*` e segue somente `a.inteiroTeor[data-link]` publicados. O download público `download_inteiro_teor&id_jurisprudencia=...` retorna HTML ISO-8859-1 com o texto da decisão. Não há API REST documentada; trata-se de automação conservadora do formulário público, sujeita a mudança de layout.
+
+Os resultados trazem também link público de consulta processual com CNJ. O coletor valida rotas HTTPS e o parâmetro CNJ tanto no link eproc2g quanto no link PJe1g publicado para Turmas Recursais; não segue esses links nem consulta sistemas fora da pesquisa. Esse CNJ é passado ao parser como identidade esperada e validado no cabeçalho do documento, para que citações a outros processos no voto não virem vínculos. Quando esse metadado não existe ou não confere, a coleta falha em vez de escolher um número arbitrário. Campos persistidos seguem `documentos_publicos` v0.8: `fonte=trf6_jurisprudencia`, `tribunal=TRF6`, texto publicado e Bronze, sem processo novo nem vínculo salvo sem CNJ explícito. Corpus fora da triagem IpeaIA, sujeito a revisão de privacidade antes de qualquer uso analítico/divulgação. O painel/API administrativo devolve somente metadados dessa fonte; texto, ementa, decisão e URL ficam retidos enquanto `revisao_privacidade=pendente`.
+
+Busca BPC observada: TRF6 4.134 resultados, TRU6 19, Turmas Recursais 6.566; Varas Federais retornaram zero em buscas BPC e LOAS. Esses totais informados não são documentos baixados nem casos únicos. Piloto real: 5 URLs por cada uma das origens TRF6/TRU6/Turmas Recursais (15 novos documentos BPC no lote ampliado; corpus TRF6 total: 20 documentos). Tentativas anteriores falharam em dois documentos por múltiplos CNJs citados; a versão corrigida usa CNJ explícito no resultado e confere-o no texto. O vazio só é aceito com título explícito `0 documentos encontrados`, campos de total/página sem valor, página atual 1 e nenhum card; esse controle foi confirmado em chamada real. Nenhum documento foi enviado à IpeaIA.
+
 ## IA
+
+### Auditoria local de disponibilidade textual — v1 (08/10/2026)
+
+Artefato JSON local em `data/`, não tabela Silver nem extração IA. Examina todas
+as versões de `documentos_publicos` e todas as comunicações. Cada item registra
+tipo/ID local, fonte, hash de conteúdo original, campos textuais disponíveis,
+SHA-256 de cada campo textual, quantidade de caracteres, vínculos explícitos e
+ocorrências lexicais (rótulo, campo, início/fim do intervalo e texto da expressão
+de busca encontrada). Não exporta trechos de contexto nem dados pessoais.
+Grupos de textos exatamente iguais são identificados por hash, sem apagar versões.
+Marca disponibilidade: texto publicado, espelho/ementa ou ausência textual;
+isso não certifica inteiro teor, relevância, motivo, procedência ou privacidade.
+
+As pistas de renda, deficiência, idade, demora, cadastro, cessação, concessão
+e linguagem dispositiva servem somente para ordenar revisão humana. Citação de
+precedente/alegação também pode produzir ocorrência; não converter em resultado
+de processo. Estatísticas incluem versões e itens com texto, nunca estimativas
+populacionais. O artefato não altera `extracoes_ia` e não é enviado a serviço externo.
+
+### Importação INSS multi-UF — 08/10/2026
+
+`inss-indeferimentos` e `inss-concessoes` aceitam `--ufs DF GO MG` como alternativa
+mutuamente exclusiva a `--uf`. A planilha é lida uma vez e cada registro BPC
+entra somente no agregado da UF explicitamente selecionada. Deduplicação e
+schema permanecem os mesmos; manifesto de coleta registra UFs e contagens por
+UF. Validação da competência continua em todas as linhas antes de persistir.
+O modo de UF única e seu manifesto continuam compatíveis. Nenhum microdado
+individual é persistido na Silver, nenhuma inferência de vínculo judicial.
 
 ### Execução portátil sem Docker (05/10/2026)
 
@@ -376,8 +600,8 @@ natural para a amostra existente. Foram implementados e testados com respostas
 reais os coletores de espelhos STJ, pesquisa CJF/TRF1/JEF1 e agregados INSS.
 No piloto inicial foram gravados 5 documentos TRF1, 5 JEF1 e 1 STJ,
 sem CNJ coincidente com a amostra nessa etapa. Após as complementações,
-a cópia local tem 69 versões documentais: 11 CJF, 21 STJ, 7 arquivo TRF1,
-14 TNU e 16 TRF5. Há três vínculos de versões a um único processo BPC do Piauí,
+a cópia local tem 85 versões documentais: 11 CJF, 21 STJ, 7 arquivo TRF1,
+30 TNU e 16 TRF5. Há três vínculos de versões a um único processo BPC do Piauí,
 fora DF/RIDE; nenhum novo vínculo documental TNU/TRF5. Esses números são
 versões de documentos, não processos adicionais nem cobertura de autos.
 A tentativa direta TRF3 ficou `falhou` por timeout, não `sem_resultado`.
@@ -485,6 +709,48 @@ Isso valida estrutura e vínculo, não a interpretação factual, ainda pendente
 de revisão humana. Quando a API informa modelo diferente do solicitado, a
 resposta é rejeitada com diagnóstico para não registrar atribuição incorreta.
 
+### Analise textual local de comunicacoes publicadas - `comunicacao_bpc_texto_v1`
+
+Correção de 08/10/2026: a minimização protege linguagem dispositiva antes
+dos filtros amplos de nomes. O resumo exige texto não vazio até 1500 caracteres;
+lacunas exige lista de textos não vazios (lista vazia permitida). IDs booleanos
+são rejeitados. Evidências de comunicação também são remapeadas na união,
+com validação de processo e hash e auditoria dos IDs de origem/destino.
+A minimização continua preliminar, não anonimização garantida; sem envio à IA.
+
+Este tipo e separado de `triagem_bpc` e usa a versao de prompt
+`ipeaia_comunicacoes_v1`. Nao altera nem substitui extracoes de metadados. A
+entrada e preparada localmente e nao executa chamadas externas nesta versao.
+Cada extracao grava em `extracoes_ia` com `tipo_extracao=comunicacao_bpc_texto`,
+o identificador real em `modelo` (ou `local-import` para resultado sem modelo),
+`versao_prompt=ipeaia_comunicacoes_v1` e
+`status_validacao=pendente`; o resumo em portugues e a estrutura ficam em
+`resultado`, sem novas colunas ou tabelas.
+
+`resultado` contem `resumo_caso`, `motivo_judicializacao`,
+`motivo_administrativo_negativa`, `resultado_judicial`, `evidencias` e
+`lacunas`. Cada evidencia contem `comunicacao_id`, `hash_conteudo`,
+`trecho_sustentacao` e `sustenta`. A comunicacao deve pertencer ao mesmo
+processo; o hash e o trecho precisam corresponder exatamente ao texto publicado.
+Sem evidencia suficiente, o campo e `indeterminado`, sem inferencia por tipo
+publicado ou metadados.
+
+`motivo_judicializacao` distingue `demora_administrativa`,
+`implantacao_beneficio`, `concessao_inicial`, `revisao`, `restabelecimento`,
+`outro` e `indeterminado`. Motivo administrativo da negativa e resultado
+judicial sao campos independentes; resultado judicial admite
+`procedente`, `improcedente`, `parcial`, `extinto_sem_merito`,
+`ordem_processual` ou `indeterminado`, sempre com evidencia.
+
+A entrada local exclui CNJ, IDs da parte, partes, CPF, endereco, contato e
+identificadores diretos. Remocao deterministica de padroes pessoais e aplicada
+antes de persistir a previa; limite de 20 comunicacoes e 60.000 caracteres
+redigidos por pacote, excedentes rejeitados sem truncamento. A previa exige
+revisao humana de privacidade; nao e autorizacao de envio. Nenhum texto sera
+enviado a IpeaIA nesta etapa. Importacao local de resultado exige todas as
+evidencias validadas contra o banco e insere uma nova extracao pendente, sem
+atualizar ou apagar extracoes anteriores.
+
 ## Regras de qualidade
 
 - Datas normalizadas em UTC;
@@ -503,6 +769,28 @@ resposta é rejeitada com diagnóstico para não registrar atribuição incorret
 
 | Data | Decisão | Consequência |
 | --- | --- | --- |
+| 12/10/2026 | Coletar a população do Censo 2022 como contexto do denominador etário DF/RIDE, sem derivar elegibilidade individual. | IBGE SIDRA tabela 9514/variável 93: 4.556 linhas de idade para DF + 29 municípios GO + quatro MG da lista oficial Sudeco. CSV, respostas JSON e metadados em `data/raw/ibge_censo2022_ride/`; SHA-256 do JSON `86faa097a773ef8000aff1c165cce1b684a9cf54ce1aeb22a5f59109bc262c4e`. Os 53 valores `-` foram preservados sem conversão para zero. Contexto populacional de 2022, não residência dos litigantes nem medida direta de elegibilidade; fora da Silver e da IpeaIA, sem novo schema. |
+| 12/10/2026 | Investigar exportação agregada do IVCAD/Observatório e parar antes de interagir com o painel quando o controle de interface não validou a URL atual do navegador. | Nenhum dado foi exportado e nenhuma interface interna/Qlik foi chamada diretamente; seguir para fontes públicas acessíveis por endpoint/arquivo. CECAD TABCAD permanece separado: exige aceite explícito de Termo de Compromisso de Manutenção de Sigilo, não aceito nesta coleta. |
+| 12/10/2026 | Coletar em formato bruto e tabular a população do Censo 2022 para contextualizar o denominador etário do recorte DF/RIDE, sem derivar elegibilidade individual. | IBGE SIDRA tabela 9514/variável 93: 4.556 linhas de idade para DF + 29 municípios de GO + quatro de MG, lista geográfica oficial da Sudeco. CSV, respostas JSON e metadados em `data/raw/ibge_censo2022_ride/`; hash SHA-256 do JSON `86faa097a773ef8000aff1c165cce1b684a9cf54ce1aeb22a5f59109bc262c4e`. Os 53 valores `-` foram mantidos textualmente, sem serem convertidos para zero. É contexto populacional de 2022, não residência dos litigantes nem medida direta de elegibilidade; fora da Silver e da IpeaIA, sem novo schema. |
+| 12/10/2026 | Coletar a série regional pública do VIS DATA sobre tempo médio de concessão do BPC e não assumir compromisso de sigilo do TABCAD/CECAD. | Foram preservadas 330 observações (cinco regiões, jan/2021–jun/2026), HTML original e CSV derivado em `data/raw/visdata_bpc_tmc/`; SHA-256 do HTML `ca9e887def9a19b509a9af15c06894942cd9191f23e0cfbbe854d49de56af067`. Para Centro-Oeste em jun/2026, a série informa 187 dias PcD, 109 idoso e 152 total. É contexto administrativo regional, não prazo judicial nem característica de requerentes dos processos; não foi inserida na Silver nem vinculada ao DataJud. O TABCAD público oferece marcação BPC, mas exige aceite explícito de Termo de Compromisso de Manutenção de Sigilo; sem autorização do pesquisador, coleta interrompida antes de submeter consulta ou aceitar termo. |
+| 12/10/2026 | Interromper sondagem automatizada da consulta “Pública processual” do Projudi/TJGO quando o formulário apresentou `g-recaptcha-response`. | Nenhum CNJ foi submetido; CAPTCHA não resolvido/contornado; nenhum documento ou processo importado. O corpus TJGO fica pendente de consulta assistida, sem presumir ausência de texto. |
+| 12/10/2026 | Incorporar como contexto separado o Censo SUAS 2025 público, limitado a contagens municipais de CRAS e postos de cadastramento; não vincular ao DataJud. | ZIPs oficiais baixados sem autenticação: CRAS 18.561.593 bytes (SHA-256 `e19e0dd825edf739064f838b6405d8689149771dff46bdc971b5c57d5b5b6aa0`) e Postos 5.109.111 bytes (`faad38d3ab8ddfa9d808e281152133f5f6c8cb59a05edeca1f0afdf1609fd314`). Só CSV `Dados Gerais`: 8.903 CRAS em 5.547 municípios e 3.383 postos em 3.010; DF/GO/MG: 1.591 CRAS e 554 postos. Nova tabela `indicadores_suas_municipio`, migração aditiva 0008, contrato v0.10. Duas tentativas iniciais abortaram antes da Silver por erro no mapeamento do campo IBGE7; as falhas ficaram registradas e a importação corrigida foi concluída. SQLite íntegro, zero FK. CSVs de RH e sintaxes SPSS não entram na Silver; ZIPs permanecem locais e fora do Git. Não mede concessões BPC, acesso individual a CRAS ou residência dos litigantes. |
+| 12/10/2026 | Continuar a amostragem PJe/TRF1 com duas coortes adicionais de 30 CNJs, excluindo casos já tentados e usando dez seleções SHA-256 por código de órgão DataJud 743/1798/2788; validar individualmente CNJ e ID antes da Silver. | Mais 90 selecionados: 85 consultas concluídas, uma sem documentos-alvo e quatro interrompidas por falha de identidade; 207 novos documentos públicos válidos. Considerando também a retomada histórica, as 140 consultas registram 132 concluídas, uma sem documentos e sete interrompidas; PJe: 523 documentos em 208 processos, corpus 1.058 documentos/531 vínculos. Processos/DataJud/movimentos/Comunica/extrações inalterados: 16.737/16.796/907.521/220/0. SQLite íntegro; zero FK, vínculos PJe sem critério CNJ ou coleta ativa. Documentos individualmente validados antes de falha permanecem; documento com identidade divergente não entra na Silver. Sem processo novo, alteração de schema, envio à IpeaIA, commit/push ou atualização do pacote remoto. O recorte por órgão não comprova residência nem representatividade. Manifests `data/pje-amostra-adicional30-v2-20261012.json` e `data/pje-amostra-adicional30-v3-20261012.json`; detalhes em RELATORIO_PJE_PUBLICO_20261008.md. |
+| 12/10/2026 | Ampliar a consulta pública PJe/TRF1 com 30 CNJs inéditos, em quotas iguais por código de órgão DataJud 743/1798/2788 e seleção SHA-256 reproduzível; manter a validação CNJ/ID por documento. | 29 consultas concluídas com 76 documentos novos e um resultado `sem_documentos`; zero falhas de identidade neste lote. PJe: 392 documentos em 151 processos; corpus: 927 documentos e 400 vínculos. Processos/DataJud/movimentos/Comunica/extrações permaneceram 16.737/16.796/907.521/220/0. SQLite `integrity_check=ok`, zero FK, zero vínculos PJe sem critério CNJ e nenhuma coleta ativa. Nenhuma migração, processo novo, envio à IpeaIA, commit/push ou atualização do pacote remoto. Órgão atual não prova residência DF/RIDE; amostra não é estatisticamente representativa. Manifesto `data/pje-amostra-adicional30-20261012.json`; detalhes em RELATORIO_PJE_PUBLICO_20261008.md. |
+| 12/10/2026 | Retomar os 38 CNJs restantes do manifesto histórico PJe TRF1 em lotes pequenos, mantendo validação estrita por documento e excluindo da Silver qualquer documento cujo cabeçalho não confirme o CNJ solicitado. | Dos 50 casos selecionados, 47 consultas concluídas e três interrompidas por divergência/ausência de CNJ confirmado no cabeçalho. Foram acrescentados 113 documentos públicos válidos; PJe totaliza 316 documentos vinculados a 122 processos, corpus 851 documentos/324 vínculos. Processos (16.737), registros DataJud (16.796), movimentos (907.521), Comunica (220) e extrações IA (0) inalterados. SQLite íntegro, zero FK e zero vínculos PJe sem critério CNJ. Documentos anteriores individualmente validados são preservados; o documento que falha a identidade não é aceito. Sem novos processos, envio à IpeaIA, alteração de schema, commit/push ou atualização do pacote remoto. Dados não comprovam residência DF/RIDE nem cobertura completa. Detalhes em RELATORIO_PJE_PUBLICO_20261008.md. |
+| 08/10/2026 | Ampliar PJe para anos 2020–2022 e encerrar o lote ao constatar divergência real entre CNJ solicitado e cabeçalho publicado. | Mais 45 documentos válidos de 12 processos: PJe totaliza 203 textos em 85 processos; corpus 738 e vínculos 211, sem população nova. Manifesto histórico de 50: 12 consultados, 11 concluídos, um parcial e 38 não consultados após a interrupção. Documento 469433861 solicitado em 1001481-85.2020.4.01.3501 declara 1001906-15.2020.4.01.3501 no cabeçalho; rejeitado e ausente da Silver, sem presumir erro de digitação ou vínculo. Fonte de conteúdo permanece PJe público verificado + atos publicados, não CRPS nem autos completos. Parser reconhece abreviação N., cabeçalho recursal SJDF e bloco institucional único após voto, sem aceitar CNJ avulso/citação. Auditoria integral: 203 documentos, hashes/IDs/vínculos e 538 gzip; SQLite OK, zero FK, 183 testes aprovados. Três CNJs têm origem fora das três sedes principais; localização não prova residência. Último estado das 88 consultas: 83 concluídas, três sem documento alvo, duas parciais; 15 falhas históricas preservadas. Sem envio à IA, alteração de schema, commit/push ou atualização do pacote remoto. Encerramento desta tentativa segue a instrução de parar em falha não solucionável sem presumir identidade; não significa esgotamento dos portais. Detalhes em RELATORIO_PJE_PUBLICO_20261008.md. |
+| 08/10/2026 | Incluir consulta pública PJe/TRF1 como fonte viável de conteúdo individual, usando ação AJAX publicada e documentos HTML com CNJ/ID confirmados. | 158 documentos novos (68 sentenças, 41 decisões, 45 despachos, quatro acórdãos) ligados a 73 processos existentes; corpus 535 → 693 e vínculos 8 → 166. Foram consultados 76 CNJs: 72 concluídos, três sem documentos alvo na primeira página e um parcial com documento sem CNJ rejeitado. Dois CNJs têm origem Goiânia/Tocantins apesar de órgão atual no recorte; não provar DF/RIDE/residência. Originais locais: 439 gzip verificados, todos os 158 documentos reprocessados com hash/identidade/vínculo conferidos; SQLite íntegro e 181 testes aprovados. Nenhum login/CAPTCHA contornado, nenhuma migração/população nova/envio à IpeaIA. Fonte de conteúdo processual passa a incluir o texto judicial público verificado do PJe, além de atos do Comunica; não são autos completos. Triagem de metadados não passa a consumir textos automaticamente. Coleta ampliada em lotes 20/50, retomadas deduplicadas e falhas históricas preservadas. Demais fontes: Comunica em manutenção, CJF/JEF1 sem resultado nos dez novos CNJs, diários históricos inacessíveis; CRPS administrativo separado. Detalhes em RELATORIO_PJE_PUBLICO_20261008.md. |
+| 08/10/2026 | Ampliar cinco portais de jurisprudência, completar INSS janeiro–agosto/2026 DF/GO/MG e inventariar textos localmente sem classificação automática. | 303 versões novas: 535 documentos, oito vínculos explícitos e 16.737 processos preservados. INSS: 211 grupos novos de indeferimentos e 98 de concessões, com leitura multi-UF única e validação integral. Auditoria de 755 itens com hashes/posições e cinco leituras qualitativas dirigidas; pistas não equivalem a motivo/desfecho. TNU distingue cabeçalho principal de PROCESSO ORIGINÁRIO, sem vinculá-lo; coleta interrompida preservada e retomada concluída. Comunica mantém 503; CRPS pendente. Sem envio à IA ou mudança de tabelas. Fonte de conteúdo individual não muda: texto vinculado quando disponível, indeterminação quando ausente; detalhes em REVISAO_E_AMPLIACAO_FONTES_20261008.md. |
+| 08/10/2026 | Ampliar autonomamente jurisprudência pública TNU/TRF2/TRF4/TRF5/TRF6 e indeferimentos INSS de maio/2026 para DF/GO/MG; manter CRPS pendente de acesso assistido. | 59 versões novas: corpus 173 → 232, dois vínculos CNJ explícitos TRF6 a processos existentes, sem processo novo. INSS: 26.401 indeferimentos em 63 agregados novos, sem atribuição individual de motivo. Sondagem Comunica retornou 503; lote não retomado. Sem alteração de schema ou envio à IA; pacote de transferência não atualizado. Detalhes em RELATORIO_COLETA_AUTONOMA_20261008.md. |
+| 08/10/2026 | Publicar respostas Comunica como membros gzip completos por troca atômica e interromper indisponibilidade sustentada. | Impede perder a validade do gzip já publicado por ausência de trailer no encerramento abrupto; preserva respostas anteriores e arquivos legados. Ctrl+C marca falha, três erros temporários consecutivos/bloqueio param o lote. Sem nova coleta real, alteração de schema ou envio à IA. |
+| 08/10/2026 | Selecionar até 400 CNJs inéditos para Comunica com quotas 200/100/100, investigar os diários históricos TRF1 e testar cinco consultas públicas PJe. | Manifesto Comunica `20261010` salvo antes da coleta; 3.135 elegíveis após exclusões e 400 selecionados, mas a API sustentou HTTP 503: interrompido após 10 consultas/50 tentativas limitadas, zero novas comunicações, 390 pendentes; Bronze parcial e coleta `falhou` preservados. O acervo judicial histórico não foi acessível pelos links oficiais testados; nenhum diário foi importado ou vinculado. PJe respondeu HTTP 200 sem confirmar resultado/documento; sem login/CAPTCHA resolvido. CRPS exige conta gov.br e fica para consulta direta pelo pesquisador. Banco permaneceu íntegro, sem mudança de schema, sem texto enviado à IpeaIA. |
+| 08/10/2026 | Ampliar corpus TRF6 por LOAS e verificar rotas TRF3/consulta processual TRF1; exportar pacote corrigido sem sobrescrever anterior. | Cinco documentos novos TRF6: 173 versões, 16.737 processos, 220 comunicações e quatro vínculos. TRF3 e consulta legada TRF1 expiraram no acesso direto, sem falso vazio. Novo pacote `transferencia/bpc-consolidado-luna-20261008-corrigido.sqlite.gz` inclui a coleta; originais/extrações preservados, nenhum texto enviado à IA. |
+| 08/10/2026 | Corrigir minimização, validação textual e remapeamento das evidências de comunicações; permitir pacote corrigido datado via Git. | Linguagem dispositiva preservada; resumo/lacunas validados; IDs de comunicação conferidos por origem/processo/hash. Exceção Git apenas `transferencia/bpc-consolidado-luna-20261008-corrigido.sqlite.gz`, sem commit/push automático. Snapshot não incorpora coletas posteriores; textos públicos não anonimizados exigem cuidado com divulgação. |
+| 08/10/2026 | Definir analise textual separada para comunicacoes publicadas, inicialmente local, antes de introduzir o modo. | Tipo `comunicacao_bpc_texto`, prompt `ipeaia_comunicacoes_v1` e JSON em `extracoes_ia`; evidencias obrigatorias por ID/hash/trecho, campos de judicializacao/negativa/resultado separados, revisao pendente e entrada minimizada. Sem chamadas externas ou alteracao da triagem `triagem_bpc`. |
+| 08/10/2026 | Auditar o gzip interrompido, registrar revisao rastreavel de dez textos e gerar pacote SQLite novo para transferencia controlada. | O gzip da coleta `8ed0515fabfb45b89671e6768f730c02` permaneceu intacto; 136 consultas sem Bronze verificavel foram reconsultadas em nova coleta `28a0d9a73da5405f833f2acb1dc49334` (136 HTTP 200, 41 itens observados, zero novas apos deduplicacao; nenhum bloqueio repetido). Manifestos locais ficam em `data/` fora do Git. A revisao de 10 textos (6 sentencas, 4 decisoes) identificou fundamentacao/dispositivo em 10/10 e motivo administrativo explicito em 0/10; o manifesto contem CNJ/ID/hash e conclusoes sem trechos pessoais. Modo textual local usa `comunicacao_bpc_texto`/`ipeaia_comunicacoes_v1`, evidencia vinculada e revisao pendente; nenhuma chamada externa e triagem de metadados intacta. Pacote `transferencia/bpc-consolidado-luna-20261008.sqlite.gz`: 19 tabelas, 16.737 processos, 220 comunicacoes, SHA-256 `b22e9de6974cc0fe78056e1e669be6b1a2ff3f7b39181eae0d57950b494e9113`; copia validada com integridade OK e zero violacoes FK. Exige revisao de privacidade antes de publicacao; sem Bronze/diagnosticos no Git, sem commit/push e sem alterar o submodulo. |
+| 08/10/2026 | Testar a base TRF1 do CJF em 10 CNJs adicionais do manifesto do piloto e inspecionar o link do documento JEF1 `000046005`. | Dez consultas concluídas sem resultado, com Bronze e status preservados no SQLite consolidado; zero documentos ou vínculos novos. Subamostra corresponde às primeiras dez linhas do manifesto, não representa os 200 casos. O link “Acesse Aqui” aponta à consulta genérica PJe2g, não ao inteiro teor; tentativa de acesso interrompida por redirecionamento fora do host permitido. Não concluir ausência de decisão nem disponibilidade de autos. Priorizar expansão Comunica por CNJ, que já demonstrou ganho no piloto, mantendo a distinção entre publicação e autos completos. |
+| 08/10/2026 | Remapear IDs DataJud embutidos nas evidências de extrações durante a consolidação e validar seu processo. | Evita ligar evidências a outro caso quando os IDs locais colidem. Referências inválidas interrompem a união; relatório conserva IDs de origem/destino. Sem mudança de schema nem reinterpretação dos resultados da IA. |
+| 06/10/2026 | Ampliar pesquisa TNU com termo específico "benefício de prestação continuada" e confirmar disponibilidade TRF3. | TNU: 10 URLs novas/16 documentos, total 30 documentos e 16 CNJs distintos. Corpus total: 85 versões, 2.584 processos e três vínculos anteriores; integridade SQLite OK. TRF3 documenta consulta pública de acórdãos por CNJ, mas as páginas oficiais expiraram por timeout na coleta direta; zero documentos importados. |
 | 06/10/2026 | Automatizar busca e paginação pública TRF5 com retomada por documento já coletado. | Consulta LOAS (2.233 resultados informados) percorreu duas páginas e importou 10 documentos; busca acentuada "benefício assistencial" também funcionou. Base local: 69 versões (16 TRF5), 2.584 processos e três vínculos anteriores; integridade SQLite OK. Total portal não equivale ao total BPC/DF/RIDE. Textos seguem fora da IpeaIA. |
 | 06/10/2026 | Descobrir links TNU pelo formulário público e paginação AJAX, com retomada por URL já coletada na mesma versão. | Busca LOAS informou 534 resultados; duas páginas reais tiveram 20 links distintos. Piloto coletou 3 URLs/6 documentos; repetição pulou essas URLs e coletou outras 2/2 documentos. TNU local: 14 documentos de 6 CNJs; total de corpus 54 versões. Os 2.584 processos e três vínculos anteriores foram preservados. Não significa cobertura DF/RIDE, nem envio de texto à IA. |
 | 06/10/2026 | Integrar documentos HTML publicados TNU/TRF3/TRF5 por URLs oficiais explícitas, usando o corpus versionado existente. | Coleta real TNU: seis documentos; TRF5: um documento. Reexecução: zero versões novas. CNJ só do cabeçalho/campo Processo; população original permanece 2.584. Textos locais, não anonimizados nem enviados à IA. Contrato v0.8 sem migração; descoberta automática de links pendente. TRF3 teve timeout e coleta `falhou`, sem dados gravados dessa fonte. |
@@ -515,6 +803,30 @@ resposta é rejeitada com diagnóstico para não registrar atribuição incorret
 | 06/10/2026 | Integrar corpus CJF/TRF1/JEF1 e STJ, e agregados de indeferimentos INSS; testar disponibilidade no arquivo TRF1 sem bypass. | 11 documentos e 24 agregados reais na cópia SQLite local; zero vínculos com a amostra. Novas tabelas aditivas, origem/versões preservadas. Arquivo TRF1 sem documentos localizados nos CNJs testados; download DOC/TIFF segue pendente. Dados novos não acompanham o Git nem entram automaticamente na IpeaIA. |
 | 06/10/2026 | Prompt v1.2: resumo natural no JSON de extração e hierarquia TPU na entrada; pesquisar fontes públicas adicionais sem misturar populações. | `resumo_caso` até 1500 caracteres, sem novas tabelas; resultados anteriores preservados. CJF/TRF1 e STJ são fontes candidatas de textos, mas nenhuma coleta de documentos foi integrada. Motivo e desfecho continuam não determináveis só por metadados. |
 | 06/10/2026 | Versionar prompt de triagem em v1.1, explicitar formato e permitir evidências de `tribunal`/`grau`; desmembrar campos compostos válidos separados por `/`. | Resolve incompatibilidade `tribunal / grau` sem inventar vínculos nem descartar evidências. Metadados já enviados; enum de `campo` ampliado neste contrato. Resultados v1.0 preservados e passíveis de nova triagem v1.1. |
+| 07/10/2026 | Ampliar a coleta DataJud TRF1 para municípios da RIDE-DF observados na base (Formosa e Luziânia), graus G1/JE e assuntos-alvo; preservar separação entre população e documentos públicos. | Lotes concluídos: 1.950 hits DataJud no total; a população local passou de 2.584 para 4.531 processos (+1.947 líquidos) e 4.536 registros. Não é censo da RIDE: códigos observados (1798/2788) não têm formato de código IBGE de 7 dígitos descrito pelo DataJud; associação validada pelo nome do órgão e lista oficial Sudeco. 85 versões documentais e 3 vínculos inalterados. SQLite íntegro, sem violações FK. |
+| 07/10/2026 | Mapear jurisdição oficial vigente da RIDE e coletar candidatos de subseções TRF1 associadas e da subseção Unaí/TRF6. | Resolução Presi TRF1 13/2026 e lista TRF6/Unaí confirmam cobertura territorial de cidades da RIDE. Coletados 1.000 hits em cada código TRF1 743/1798/2788/216/5332/1903 e 4.314 hits completos no código TRF6 3170404. Base local: 11.865 processos e 11.922 registros (+7.334 processos líquidos nessa rodada); pool de sedes de Goiânia/Anápolis/Uruaçu e TRF6 permanece separado como suplementar, pois sede/competência não prova residência nem substitui o recorte principal TRF1. Documentos: 85 versões, 3 vínculos. Integridade SQLite OK, sem violações FK. |
+| 07/10/2026 | Corrigir normalização de `assuntos` após payload real do TRF1 retornar lista aninhada e código sem nome. | Parser achata recursivamente listas para objetos `{codigo,nome}`; código sem nome fica `nome: null`; Bronze e payload preservam a fonte sem mudança. Sem migração ou alteração do contrato normalizado. 13 testes DataJud e 99 testes da suíte passaram com SQLite em memória. PostgreSQL não foi testado: ambiente Windows bloqueia o binário `libpq`. |
 | 05/10/2026 | Aceitar bloco Markdown JSON e normalizar caminhos de evidências existentes; rejeitar divergência de modelo informada pela API. | Corrige incompatibilidade de formato observada no GLM sem aceitar caminhos inexistentes nem mudar o schema; preserva rastreabilidade do caminho em `referencia`. |
 | 05/10/2026 | Detalhar falhas de evidências e conservar respostas IpeaIA rejeitadas em diagnóstico local sem token. | Não aceitar IDs externos à entrada nem formatos inválidos; nenhuma extração gravada para o processo rejeitado e nenhuma repetição automática. Sem alteração do schema ou da metodologia. |
 | 05/10/2026 | Usar cópia SQLite no servidor remoto sem Docker; manter PostgreSQL na origem. | Mesmas tabelas e dados da aplicação; extrações de IA persistidas em `data/bpc-remote.sqlite`. Embeddings armazenados como JSON, sem busca pgvector nesse ambiente. |
+| 07/10/2026 | Integrar busca pública de inteiro teor TRF6 com parser que valida identidade CNJ contra o resultado e o documento. | `trf6-pesquisa` importou 10 decisões da origem TRF6, cinco da TRU6 e cinco das Turmas Recursais (20 documentos no corpus); Varas Federais sem resultados BPC/LOAS. Nenhum processo novo ou vínculo presumido. Parser evita confundir citações no voto com o processo julgado. Texto não enviado à IpeaIA e API do painel retém texto/link até revisão de privacidade. |
+| 07/10/2026 | Incluir candidatos DataJud TJMG de quatro municípios mineiros da RIDE e terminar lote Comunica PJe retomável; testar outras fontes já mapeadas. | 361 registros TJMG (274 Arinos, 52 Buritis, 35 Unaí; Cabeceira Grande sem hits), a validar como competência delegada; 100 processos consultados no Comunica e 13 novas comunicações. Arquivo TRF1 acessível, mas um lote de cinco CNJs não encontrou julgados publicados; segunda tentativa TRF3 expirou por timeout. Não contornar CAPTCHA/credenciais nem usar API institucional de notícias como dados de processo. |
+| 07/10/2026 | Integrar busca pública de inteiro teor BPC no eproc/TRF4 com validação de CNJ do card e paginação oficial. | Portal respondeu sem credencial; buscas BPC reportaram 6.917 resultados TRF4, 443 TRU4 e 25.342 Turmas Recursais. `trf4-pesquisa` coletou 10 documentos TRF4, cinco TRU4 e cinco Turmas Recursais (20 no total) em três lotes; não criou processos nem vínculos automáticos. Persistidos no PostgreSQL configurado (2.584 processos/2.588 registros); a cópia SQLite `data/bpc-remote.sqlite` não foi sincronizada nesta coleta. Origem suplementar fora do recorte principal TRF1/DF. Texto/link retidos na API até revisão de privacidade e nenhum documento enviado à IpeaIA. Contrato v0.9 sem migração; 111 testes da suíte passaram. |
+| 07/10/2026 | Investigar TRF3/TJMG e testar importação STJ já prevista no contrato, sem misturar corpora judiciais. | Pesquisa TRF3 expirou por timeout de 90s; TJMG respondeu HTTP 401 com desafio “Informe o código” (CAPTCHA), sem contorno. Importação STJ salvou 1 documento BPC/LOAS no corpus `stj`; lote interrompido durante o próximo recurso e marcado `falhou` com 1 registro. Sem processos ou vínculos presumidos, sem envio à IpeaIA e sem mudança de schema. |
+| 07/10/2026 | Integrar pesquisa pública eproc/TRF2, TRU2 e Turmas Recursais por busca BPC, com validação CNJ e paginação. | Portal oficial respondeu sem credencial; consultas BPC reportaram 5.927 hits TRF2, 29 TRU2 e 16.367 Turmas Recursais. `trf2-pesquisa` coletou 10 decisões TRF2, cinco TRU2 e cinco de Turmas Recursais (20 versões); CNJ do card coincide com parâmetro da rota e cabeçalho do documento. Sem processo/vínculo automático. PostgreSQL: 2.584 processos, 2.588 registros e 40 documentos publicados nas rodadas TRF2/TRF4; SQLite remoto não sincronizado. Texto/link ocultos na API até revisão de privacidade e sem envio à IpeaIA. TRF2 fora do recorte principal TRF1/DF; contrato v0.9 sem migração; 117 testes passaram. |
+| 07/10/2026 | Testar e coletar DataJud TJGO para os 29 municípios goianos da RIDE, assuntos 6114/11946/11947, graus G1/JE e payload essencial. | Sudeco lista os municípios e os códigos foram resolvidos pelo serviço oficial do IBGE. DataJud reportou 4.513 hits; coleta retomável terminou com 4.513 registros e 4.513 CNJs distintos. PostgreSQL passou de 2.584 para 7.097 processos (4.513 novos) e de 2.588 para 7.101 registros. Não confirma competência federal delegada nem residência na RIDE; manter grupo TJGO separado. SQLite remoto não foi sincronizado. Nenhuma migração de schema. |
+| 07/10/2026 | Consolidar em SQLite novo o PostgreSQL ativo, `data/bpc-remote.sqlite` e o pacote SQLite de transferência, com chaves lógicas e relatório de conflito. | Snapshot PostgreSQL somente leitura; originais preservados. IDs locais remapeados, FKs e unicidade verificadas. Conflitos ficam no JSON com as duas origens; hashes divergentes de documentos são versões, snapshots agregados não se somam. Operação fora do schema Silver, sem migração. |
+| 07/10/2026 | Consultar manifesto reproduzível de 50 CNJs TRF1/DF e subseções de Formosa/Luziânia no CJF/JEF1, Arquivo TRF1 e Comunica PJe; expandir a 200 após vínculo correto e execução estável. | Manifesto estratificado por ano e assunto TPU, semente `20261007`. Resultados negativos e positivos são preservados por fonte. Comunicações são atos publicados, não autos. Vínculo documental exige CNJ explícito; sede de órgão não prova residência. Cobertura final fica no relatório de execução. |
+| 07/10/2026 | Adicionar `--manifest` explícito a `cjf-amostra` e selecionar INSERT compatível com SQLite/PostgreSQL. | A seleção automática do CJF continua limitada a Brasília; um CSV explícito aceita até 200 CNJs e não altera a população. Testes SQLite cobrem colisões locais, TPU, FKs, comunicações e recusa de saída existente. Sem schema novo. |
+| 07/10/2026 | Executar P1 até 200 CNJs, P2 em cinco fontes complementares e P3 para três competências INSS DF/GO/MG. | P1: 200 CNJs consultados; 35 tiveram publicações, 13 tiveram sentença/decisão/acórdão e 0 tiveram motivo administrativo explícito. Arquivo TRF1: 200 sem resultado. P2: 25 URLs e 21 versões suplementares sem vínculos automáticos. P3: 202606–202608 com agregados por UF, reutilizando recursos e deduplicando agosto DF pelo hash. Resultados, numeradores/denominadores e limites em `RELATORIO_EXECUCAO_COLETA_LUNA.md`. Sem alteração de schema. |
+| 08/10/2026 | Retomar as 64 consultas pendentes do manifesto Comunica `20261008` e ampliar com mais 200 CNJs inéditos, nas quotas 100/50/50, usando o SQLite consolidado explicitamente. | Os dois lotes foram concluídos sem bloqueio: 400 CNJs consultados, 68 com publicações, 110 itens observados e 110 novos após deduplicação; o banco passou de 110 para 220 comunicações e não criou processos. Entre os 400, 10 CNJs têm rótulos sentença/decisão (7 sentença, 4 decisão com 1 sobreposição; 0 acórdão); revisão de 10 textos não identificou motivo explícito de indeferimento. O Bronze da execução interrompida anterior permanece preservado e ilegível por gzip truncado; ela segue `falhou`. Integridade SQLite `ok`, zero violações FK, processos/documentos/extrações preservados, sem schema novo. Detalhes por grupo/ano, hashes, IDs e limites em `RELATORIO_AMPLIACAO_COMUNICA_20261008.md`. |
+| 12/10/2026 | Coletar do SIDRA o Censo 2022 de pessoas com deficiência por grupo etário nos municípios da RIDE-DF, sem criar integração analítica individual. | Tabela 10131, variável 11852: 2.754 linhas para 34 municípios (27 faixas/grupos etários × 3 categorias de deficiência). 131 células vieram como `-` e foram preservadas; 115 somas numéricas diferem em somente uma pessoa por arredondamento. JSON, metadados, CSV e manifesto em `data/raw/ibge_censo2022_ride/`. Contexto agregado; não mede elegibilidade BPC, não identifica litigantes, fora da Silver e da IpeaIA. |
+| 12/10/2026 | Coletar estatísticas públicas de rendimento municipal do Censo 2022 para contextualizar desigualdades no recorte DF/RIDE, sem inferir condição econômica individual. | SIDRA tabela 10295, variáveis de rendimento nominal médio e mediano mensal domiciliar per capita: 68 valores (duas variáveis × 34 municípios), todos disponíveis. JSON, metadados, CSV e manifesto em `data/raw/ibge_censo2022_ride/`. A definição exclui algumas condições de moradia; são estatísticas agregadas de 2022, não renda de litigantes nem elegibilidade BPC. Fora da Silver e da IpeaIA. |
+| 12/10/2026 | Coletar a série administrativa pública de BPC do VIS DATA 3 por município pagador para os 34 municípios do recorte RIDE-DF, sem misturá-la a processos judiciais. | Sem login. Série anual 2004–2024: 714 linhas (21 × 34). Série mensal: 8.243 linhas, 244 referências esperadas de 01/2004 a 04/2024; 32 municípios têm todas, Cabeceira Grande tem 40 referências ausentes e Vila Propício 13. Gaps mantidos como ausência, sem imputar zero. JSONs, CSVs e manifestos/hashes em `data/raw/mds_visdata_bpc_municipio_ride/`. Município pagador não prova residência; agregado não é processo nem pessoa individual. Fora da Silver e da IpeaIA. |
+| 12/10/2026 | Retomar exportação dos agregados públicos do IVCAD/Observatório sem credenciais nem chamada direta às interfaces internas do Qlik. | A interface CUA retornou inventário vazio (`apps=[]`, `browsers=[]`) e não disponibilizou o navegador embutido (`Browser is not available: iab`). Nenhum dado foi exportado e nenhum endpoint interno do Qlik foi chamado. Como rota alternativa sem interface, a coleta prosseguiu no endpoint público do VIS DATA 3, registrada acima; IVCAD permanece pendente até haver navegador acessível. |
+| 13/10/2026 | Retomar e concluir a amostra pública do Comunica/DJEN de 400 processos TRF1 (Brasília, Formosa e Luziânia), sem autenticação e sem confundir publicações com inteiro teor. | 400/400 consultas concluídas: 41 processos com publicações e 359 sem resultado (31/200 Brasília, 4/100 Formosa, 6/100 Luziânia); 82 comunicações novas, total 302. O banco permaneceu com 16.737 processos, 16.796 registros DataJud, 907.521 movimentos, 1.058 documentos, 531 vínculos e zero extrações IA; consultas PJe 851→1.241. Bronze gzip íntegra (389 linhas na execução principal), SQLite `integrity_check=ok`, zero violações FK e zero duplicatas processo/hash. Backup pré-coleta `data/backup-pre-comunica-djen-20261012.sqlite` (SHA-256 `3a8a25d99350defd1b0f766939f0758ae5c520505c9e69234cabc28f51d5aea`). Sem alteração de schema, envio à IpeaIA, commit ou push. “Sem resultado” não prova inexistência de ato ou de autos; Comunica contém publicações, não peças/inteiro teor. Detalhes em `RELATORIO_COLETA_COMUNICA_DIARIOS_LUNA.md`. |
+| 13/10/2026 | Ampliar sem credenciais o corpus público de decisões BPC no CJF/JEF1 por pesquisa temática `BPC`, com paginação retomável e vínculos apenas por CNJ explícito. | O portal reportou 1.092 resultados em 37 páginas; todas consultadas e preservadas: 1.092 acórdãos com texto/CNJ, sem chaves duplicadas; 42 arquivos brutos HTML/XML gzip íntegros. Sete documentos vinculados por CNJ explícito a seis processos existentes, sem criar processos. Corpus `documentos_publicos` 1.058→2.150; processos 16.737, vínculos 531→538; zero extrações IA. Coletor ganhou `--pagina-inicial` para retomar páginas CJF sem alterar schema. SQLite `integrity_check=ok`, zero FK. Backup `data/backup-pre-cjf-tematico-20261013.sqlite` (481.345.536 bytes; SHA-256 `71f5338f921f49a41169ecf48d80e257bcb5a671b649cf9af6d6d3c3f890f012`). Sem envio à IpeaIA. Corpus de jurisprudência publicada é complementar, não amostra representativa nem autos integrais. Detalhes em `docs/FONTES_ABERTAS.md`. |
+| 13/10/2026 | Avançar as pesquisas públicas seguintes de TNU/TRF2/TRF4/TRF5/TRF6 para `LOAS`, consultando URLs ainda não concluídas e mantendo cada tribunal separado. | 50 URLs TNU resultaram em 100 documentos novos; TRF2: 48/50; TRF4: 50/50; TRF5: 50/50; TRF6: 50/50; total 298 versões novas. 298/298 arquivos brutos gzip presentes e íntegros. Nenhum processo ou vínculo foi criado; corpus por fonte: TNU 266, TRF2 129, TRF4 132, TRF5 130, TRF6 135. Sem credencial, CAPTCHA, alteração de schema ou envio à IpeaIA; decisões são corpus complementar. |
+| 13/10/2026 | Consultar mais 50 casos pendentes no PJe/TRF1 público, equilibrados entre Brasília, Formosa e Luziânia, sem login nem contorno de CAPTCHA, validando cada documento pelo CNJ do cabeçalho. | 50/50 consultas: 32 com documentos e 18 sem documentos-alvo; 67 documentos novos vinculados por CNJ explícito aos 32 processos. Distribuição 17/17/16; 218/218 arquivos brutos gzip íntegros; nenhum caso atingiu o limite de dez documentos. PJe total 590 documentos, população de processos inalterada. Estado final: 16.737 processos, 16.796 registros DataJud, 907.521 movimentos, 1.241 consultas PJe, 302 comunicações, 2.515 documentos, 605 vínculos, zero extrações IA; `integrity_check=ok`, zero FK e duplicatas. Backup final `data/backup-pos-coletas-20261013.sqlite` (513.933.312 bytes; SHA-256 `8d0ffdd6b63232db7e509b34c8cee66a09f8190f41555cc965f8cb6aff110924`). Sem alteração de schema, chamada à IpeaIA ou commit/push. |
+| 13/10/2026 | Avançar buscas públicas pendentes TNU/TRF2/TRF4/TRF5/TRF6 por `LOAS` e testar termo alternativo `BPC` no TRF6. | Novos documentos: TNU 80, TRF2 47, TRF4 50, TRF5 50, TRF6 100 (50 `LOAS` + 50 `BPC`), total +327? Correção: estes lotes somam 327 documentos nesta rodada incluindo a coleta de 100 no TRF6. Totais atuais: 2.853 documentos, 618 vínculos; TNU 346, TRF2 176, TRF4 182, TRF5 180, TRF6 235. Coleta pública complementar, sem processos ou vínculos presumidos; SQLite `integrity_check=ok`, zero violações FK. |
+| 13/10/2026 | Suspender a segunda ampliação do PJe/TRF1 quando a validação de identidade documental encontrar divergência entre o CNJ consultado e o cabeçalho do documento. | Execução interrompida pela proteção existente após 15 processos tentados: 11 documentos novos preservados, uma divergência de identidade e os demais casos do lote não tentados. Sem contorno nem nova consulta. PJe total 601 documentos; banco 16.737 processos, 2.853 documentos, 618 vínculos, `integrity_check=ok`, zero violações FK. |

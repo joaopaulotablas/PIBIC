@@ -8,7 +8,8 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import delete, func, or_, select, text
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 from .database import make_engine
 
@@ -51,6 +52,7 @@ class PostgresStore:
     def __init__(self, database_url: str):
         self.engine = make_engine(database_url, pool_pre_ping=True)
         self.Session = sessionmaker(self.engine, expire_on_commit=False)
+        self._insert = sqlite_insert if self.engine.dialect.name == "sqlite" else pg_insert
 
     def close(self) -> None:
         self.engine.dispose()
@@ -95,7 +97,7 @@ class PostgresStore:
         numbers = sorted({doc["numero_processo"] for doc in documents})
         with self.Session.begin() as session:
             session.execute(
-                insert(Processo)
+                self._insert(Processo)
                 .values([{"numero_processo": number} for number in numbers])
                 .on_conflict_do_nothing(index_elements=[Processo.numero_processo])
             )
@@ -110,7 +112,7 @@ class PostgresStore:
                 record_id = self._upsert_record(session, document, process_ids[document["numero_processo"]])
                 if run_id:
                     session.execute(
-                        insert(ColetaRegistroDatajud)
+                        self._insert(ColetaRegistroDatajud)
                         .values(coleta_id=uuid.UUID(run_id), registro_id=record_id)
                         .on_conflict_do_nothing()
                     )
@@ -121,7 +123,7 @@ class PostgresStore:
     def upsert_external_resources(self, resources: list[dict[str, Any]]) -> int:
         with self.Session.begin() as session:
             for resource in resources:
-                statement = insert(RecursoExterno).values(
+                statement = self._insert(RecursoExterno).values(
                     fonte=resource["fonte"],
                     conjunto_id=resource["conjunto_id"],
                     conjunto_nome=resource.get("conjunto_nome"),
@@ -133,7 +135,7 @@ class PostgresStore:
                 )
                 session.execute(
                     statement.on_conflict_do_update(
-                        constraint="uq_recurso_externo_fonte_id",
+                        index_elements=[RecursoExterno.fonte, RecursoExterno.recurso_id],
                         set_={
                             "conjunto_id": statement.excluded.conjunto_id,
                             "conjunto_nome": statement.excluded.conjunto_nome,
@@ -151,13 +153,14 @@ class PostgresStore:
         now = datetime.now(timezone.utc)
         with self.Session.begin() as session:
             for indicator in indicators:
-                statement = insert(IndicadorBpcMunicipio).values(
+                statement = self._insert(IndicadorBpcMunicipio).values(
                     **indicator,
                     coleta_id=uuid.UUID(run_id),
                     coletado_em=now,
                 )
                 session.execute(statement.on_conflict_do_update(
-                    constraint="uq_indicador_bpc_municipio",
+                    index_elements=[IndicadorBpcMunicipio.fonte, IndicadorBpcMunicipio.mes_ano,
+                                    IndicadorBpcMunicipio.codigo_ibge, IndicadorBpcMunicipio.tipo_id],
                     set_={
                         "data_referencia": statement.excluded.data_referencia,
                         "municipio_nome": statement.excluded.municipio_nome,
@@ -171,8 +174,7 @@ class PostgresStore:
                 ))
         return len(indicators)
 
-    @staticmethod
-    def _upsert_record(session: Session, document: dict[str, Any], process_id: int) -> int:
+    def _upsert_record(self, session: Session, document: dict[str, Any], process_id: int) -> int:
         classe = document.get("classe") or {}
         orgao = document.get("orgao_julgador") or {}
         values = {
@@ -192,16 +194,15 @@ class PostgresStore:
             "payload": document.get("payload_original") or {},
             "coletado_em": _datetime(document.get("coletado_em")),
         }
-        statement = insert(RegistroDatajud).values(**values)
+        statement = self._insert(RegistroDatajud).values(**values)
         update_values = {key: statement.excluded[key] for key in values if key not in {"datajud_index", "datajud_id"}}
         return session.execute(
             statement.on_conflict_do_update(
-                constraint="uq_datajud_index_id", set_=update_values
+                index_elements=[RegistroDatajud.datajud_index, RegistroDatajud.datajud_id], set_=update_values
             ).returning(RegistroDatajud.id)
         ).scalar_one()
 
-    @staticmethod
-    def _replace_subjects(session: Session, record_id: int, subjects: list[dict[str, Any]]) -> None:
+    def _replace_subjects(self, session: Session, record_id: int, subjects: list[dict[str, Any]]) -> None:
         session.execute(delete(RegistroAssunto).where(RegistroAssunto.registro_id == record_id))
         seen: set[int] = set()
         for subject in subjects:
@@ -210,7 +211,7 @@ class PostgresStore:
                 continue
             code = int(code)
             seen.add(code)
-            statement = insert(Assunto).values(codigo=code, nome=subject.get("nome"))
+            statement = self._insert(Assunto).values(codigo=code, nome=subject.get("nome"))
             session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[Assunto.codigo], set_={"nome": statement.excluded.nome}
@@ -264,9 +265,9 @@ class PostgresStore:
                 select(Processo.id).where(Processo.numero_processo == process_number)
             )
             if process_id is None:
-                statement = insert(Processo).values(numero_processo=process_number).returning(Processo.id)
+                statement = self._insert(Processo).values(numero_processo=process_number).returning(Processo.id)
                 process_id = session.execute(statement).scalar_one()
-            query = insert(ConsultaPje).values(
+            query = self._insert(ConsultaPje).values(
                 processo_id=process_id,
                 status=status,
                 tentativas=attempts,
@@ -291,7 +292,7 @@ class PostgresStore:
             for item in items:
                 canonical = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-                communication = insert(ComunicacaoPje).values(
+                communication = self._insert(ComunicacaoPje).values(
                     processo_id=process_id,
                     comunica_id=str(item.get("id")) if item.get("id") is not None else None,
                     hash_conteudo=digest,
@@ -309,7 +310,7 @@ class PostgresStore:
                 )
                 session.execute(
                     communication.on_conflict_do_update(
-                        constraint="uq_comunicacao_hash",
+                        index_elements=[ComunicacaoPje.processo_id, ComunicacaoPje.hash_conteudo],
                         set_={
                             "payload": communication.excluded.payload,
                             "texto": communication.excluded.texto,
@@ -366,7 +367,7 @@ class PostgresStore:
                             for key, value in row.items()
                             if key not in {code_field, parent_field, "nome"} and value
                         }
-                        statement = insert(ReferenciaTpu).values(
+                        statement = self._insert(ReferenciaTpu).values(
                             tipo=kind,
                             codigo=int(row[code_field]),
                             codigo_pai=int(row[parent_field]) if row.get(parent_field) else None,

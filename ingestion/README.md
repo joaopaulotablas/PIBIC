@@ -10,9 +10,18 @@ python -m bpc_ingestion datajud
 python -m bpc_ingestion comunica
 python -m bpc_ingestion importar-tpu
 python -m bpc_ingestion resumo
+python -m bpc_ingestion mds-censo-suas
 ```
 
 Consulte o [README principal](../README.md) para instalação e exemplos.
 
-O SQLite foi mantido somente como compatibilidade para testes pequenos com
-`datajud --storage sqlite`; ele não representa o esquema analítico oficial.
+`mds-censo-suas` baixa os arquivos públicos do Censo SUAS e guarda apenas
+contagens de CRAS/Postos por município; não lê os CSVs de RH. Para adicionar os
+agregados a uma cópia consolidada SQLite existente, use:
+
+```text
+python -m bpc_ingestion mds-censo-suas --storage sqlite --sqlite-path data/bpc-consolidado-luna-20261007.sqlite
+```
+
+O padrão continua usando PostgreSQL. O SQLite é compatibilidade/local e não
+substitui o esquema analítico oficial.
