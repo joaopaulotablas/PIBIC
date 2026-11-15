@@ -1,109 +1,273 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Processos · BPC Jud</title>
-  <style>
-    :root { font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #17212b; background: #f3f6f7; }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    header { padding: 22px max(20px, calc((100vw - 1400px)/2)); background: #104c51; color: white; }
-    header a { color: #d8f4f0; }
-    header h1 { margin: 7px 0 0; font-size: 29px; }
-    header p { margin: 2px 0; color: #d8eeec; }
-    main { max-width: 1440px; margin: 24px auto; padding: 0 20px 50px; }
-    .card { background: white; border: 1px solid #dce3e8; border-radius: 13px; padding: 20px; margin-bottom: 18px; box-shadow: 0 8px 28px #142a3210; }
-    .intro { color: #52636d; max-width: 920px; }
-    .stats { display: grid; grid-template-columns: repeat(5, minmax(120px,1fr)); gap: 10px; }
-    .stat { padding: 14px; border: 1px solid #dce3e8; border-radius: 10px; }
-    .stat small { display: block; color: #52636d; }
-    .stat strong { font-size: 24px; }
-    form { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
-    label { display: grid; gap: 4px; color: #52636d; font-size: 13px; }
-    input, select, button { font: inherit; border-radius: 8px; padding: 9px 11px; }
-    input, select { border: 1px solid #b8c8ce; background: white; min-height: 42px; }
-    input[type=search] { min-width: 270px; }
-    button { border: 0; background: #155e63; color: white; font-weight: 600; cursor: pointer; }
-    button:disabled { opacity: .5; cursor: default; }
-    .secondary { color: #155e63; background: #e6f4f2; }
-    .layout { display: grid; grid-template-columns: minmax(390px, .85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
-    h2 { font-size: 20px; margin: 0 0 12px; }
-    h3 { font-size: 16px; margin: 0 0 8px; }
-    .muted { color: #63727b; }
-    .message { margin: 12px 0; color: #63727b; }
-    .error { color: #a32920; }
-    .process-list { display: grid; gap: 8px; }
-    .process-row { width: 100%; text-align: left; background: #f7faf9; color: #17212b; border: 1px solid #dce3e8; }
-    .process-row:hover, .process-row.selected { border-color: #155e63; background: #edf8f6; }
-    .process-row strong, .process-row small { display: block; }
-    .process-row small { margin-top: 3px; color: #52636d; font-weight: 400; }
-    .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
-    .detail-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: start; }
-    .pill { display: inline-block; color: #155e63; background: #e6f4f2; border-radius: 999px; padding: 3px 8px; font-size: 12px; }
-    .notice { background: #fff7e7; border-left: 4px solid #bb7a20; padding: 11px 13px; margin: 14px 0; }
-    .section { border-top: 1px solid #dce3e8; padding-top: 15px; margin-top: 19px; }
-    .entry { border: 1px solid #dce3e8; border-radius: 9px; padding: 12px; margin: 9px 0; overflow-wrap: anywhere; }
-    .entry p { margin: 6px 0; }
-    .facts { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 16px; }
-    .facts div { overflow-wrap: anywhere; }
-    .facts small { display: block; color: #63727b; }
-    .events { max-height: 450px; overflow: auto; }
-    .event { padding: 9px 2px; border-bottom: 1px solid #e7edef; }
-    .event small { color: #63727b; }
-    .text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 400px; overflow: auto; background: #f7faf9; padding: 12px; border-radius: 8px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 470px; overflow: auto; font-size: 12px; background: #13272a; color: #dceeed; padding: 14px; border-radius: 8px; }
-    details summary { cursor: pointer; font-weight: 600; }
-    a { color: #155e63; }
-    @media(max-width: 900px) { .layout { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(3,1fr); } }
-    @media(max-width: 550px) { .stats { grid-template-columns: repeat(2,1fr); } .facts { grid-template-columns: 1fr; } input[type=search] { min-width: 0; width: 100%; } }
-  </style>
-</head>
-<body>
-  <header>
-    <a href="/">← Voltar ao painel de coleta</a>
-    <a href="/admin/documentos">Documentos públicos complementares</a>
-    <h1>Explorador de processos</h1>
-    <p>Veja o que foi coletado, de qual fonte veio e quais análises existem para cada processo.</p>
-  </header>
-  <main>
-    <div class="card">
-      <div class="stats" id="stats"></div>
-      <p class="intro">Um processo pode ter vários registros DataJud, por grau ou índice. Uma comunicação publicada pode trazer texto de uma decisão, mas não equivale ao conjunto completo dos autos. O resultado jurídico só aparece abaixo quando houver uma extração de IA registrada e identificada.</p>
-    </div>
-    <div class="card">
-      <form id="filters">
-        <label>Número CNJ ou início<input id="number-filter" type="search" placeholder="Ex.: 0001234-56.2024.4.01.3400"></label>
-        <label>Tribunal<select id="tribunal-filter"><option value="">Todos</option><option>TRF1</option><option>TRF2</option><option>TRF3</option><option>TRF4</option><option>TRF5</option><option>TRF6</option><option>STJ</option></select></label>
-        <label>Órgão julgador<select id="municipio-filter"><option value="">Todas as localidades</option><option value="743">Brasília/DF (DataJud 743)</option></select></label>
-        <label>Grau<select id="grau-filter"><option value="">Todos</option><option value="G1">1º grau (G1)</option><option value="JE">Juizado (JE)</option><option value="G2">2º grau (G2)</option><option value="TR">Turma recursal (TR)</option></select></label>
-        <label>Comunicação<select id="communication-filter"><option value="">Todas</option><option value="true">Com publicação</option><option value="false">Sem publicação</option></select></label>
-        <button type="submit">Buscar</button>
-      </form>
-    </div>
-    <div class="layout">
-      <section class="card" aria-label="Lista de processos">
-        <h2>Processos no banco</h2>
-        <p id="list-status" class="message">Carregando…</p>
-        <div class="process-list" id="process-list"></div>
-        <div class="pager"><button id="previous" class="secondary" type="button">Anterior</button><span id="page-label"></span><button id="next" class="secondary" type="button">Próxima</button></div>
-      </section>
-      <section class="card" aria-label="Detalhes do processo">
-        <div id="detail" class="message">Selecione um processo para ver seus dados.</div>
-      </section>
-    </div>
-  </main>
-  <script>
-    const $ = id => document.getElementById(id);
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Processos · BPC Jud</title><style data-panel-design>:root {
+  color-scheme: light;
+  --ink: #202127;
+  --muted: #62656f;
+  --line: #e4e4e8;
+  --paper: #ffffff;
+  --canvas: #fafafb;
+  --sidebar: #f3f3f5;
+  --hover: #eeeef1;
+  --accent: #4059ad;
+  --accent-soft: #edf0fb;
+  --ok: #34614a;
+  --warn: #78551e;
+  --bad: #a33434;
+  font: 14px/1.55 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+a { color: var(--accent); text-underline-offset: 3px; }
+button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button, .button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+button:hover:not(:disabled), .button:hover { background: var(--hover); }
+.primary, button[type=submit]:not(.secondary) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.primary:hover:not(:disabled), button[type=submit]:hover { background: #393b44; }
+.secondary { background: var(--paper); color: var(--ink); }
+input:not([type=checkbox]), select { min-height: 36px; width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid #c9cbd2; border-radius: 5px; background: var(--paper); color: var(--ink); }
+input::placeholder { color: #767984; }
+input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); flex: 0 0 auto; }
+label { color: var(--muted); font-size: 12px; font-weight: 500; display: grid; gap: 6px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1, h2, h3, h4 { text-wrap: balance; }
+h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.025em; font-weight: 650; }
+h2 { font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+h3 { font-size: 14px; font-weight: 650; }
+h4 { font-size: 13px; font-weight: 650; }
+p { text-wrap: pretty; }
+.muted, .hint, .message, small { color: var(--muted); }
+.hint { font-size: 12px; line-height: 1.6; }
+.error { color: var(--bad); }
+.skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; z-index: 30; background: var(--paper); }
+.skip-link:focus { top: 12px; }
+.app-sidebar { width: 216px; position: fixed; inset: 0 auto 0 0; z-index: 20; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 22px 12px 16px; }
+.app-brand { display: flex; gap: 10px; align-items: center; padding: 0 10px 28px; color: var(--ink); font-size: 15px; font-weight: 650; text-decoration: none; }
+.app-mark { width: 28px; height: 28px; background: var(--ink); border-radius: 6px; display: grid; place-items: center; color: white; font-size: 13px; }
+.app-brand small { display: block; font-weight: 400; font-size: 11px; }
+.nav-label { color: var(--muted); font-size: 11px; padding: 12px 12px 8px; }
+.app-nav { display: grid; gap: 4px; }
+.app-nav a { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 12px; border-radius: 5px; color: #575a65; text-decoration: none; font-size: 13px; }
+.app-nav a:hover { background: var(--hover); }
+.app-nav a[aria-current=page] { color: var(--ink); background: #e5e5ea; font-weight: 600; }
+.app-nav svg { width: 16px; height: 16px; flex: 0 0 16px; stroke-width: 1.6; }
+.sidebar-note { margin-top: auto; padding: 16px 12px 0; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+.sidebar-note a { display: block; margin-bottom: 14px; color: var(--muted); }
+.workspace { margin-left: 216px; min-width: 0; }
+.topbar { height: 54px; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--paper); font-size: 12px; color: var(--muted); }
+.breadcrumbs { display: flex; align-items: center; gap: 12px; }
+.breadcrumbs strong { font-weight: 500; color: var(--ink); }
+.topbar .local-label { font-size: 11px; }
+.mobile-nav-toggle { display: none; }
+main.page { padding: 28px 32px 48px; max-width: 1800px; margin: auto; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 24px; }
+.page-heading p { margin-top: 6px; color: var(--muted); font-size: 13px; max-width: 76ch; }
+.heading-actions { display: flex; align-items: center; gap: 8px; }
+.statusbar { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dot { height: 6px; width: 6px; background: #92959e; border-radius: 50%; }
+.dot.online { background: var(--ok); }
+.dot.offline { background: var(--bad); }
+.summary-strip, .stats, .metrics { display: flex; flex-wrap: wrap; border-block: 1px solid var(--line); padding: 16px 0; gap: 12px 32px; margin-bottom: 24px; }
+.metric, .stat { min-width: 110px; }
+.metric span, .stat small { display: block; font-size: 11px; color: var(--muted); }
+.metric strong, .stat strong { font-size: 19px; line-height: 1.7; font-weight: 600; font-variant-numeric: tabular-nums; }
+.research-note { font-size: 12px; color: var(--muted); margin-bottom: 20px; max-width: 100ch; }
+.panel, .surface { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.panel-head, .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.panel-head { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.panel-body { padding: 20px; }
+.section-heading { margin: 28px 0 12px; }
+.operations-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 24px; align-items: start; }
+.operations-grid > *, .operations-stack { min-width: 0; }
+.operations-stack { display: grid; gap: 20px; }
+.form-section { padding: 20px; display: grid; gap: 16px; border-bottom: 1px solid var(--line); }
+.form-section:last-child { border-bottom: 0; }
+.form-section h3 { margin-bottom: 4px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.checks label, .inline-check { display: flex; align-items: center; gap: 7px; min-height: 30px; color: var(--ink); font-size: 12px; font-weight: 400; }
+.form-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: var(--canvas); border-radius: 0 0 6px 6px; }
+.utility-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; border-top: 1px solid var(--line); }
+.utility-row p { margin-top: 3px; }
+.steps { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11px; color: var(--muted); padding: 12px 0 24px; }
+.step { display: flex; align-items: center; gap: 7px; }
+.step::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #b4b6be; }
+.step.done::before { background: var(--ok); }
+.badge, .pill { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 4px; background: var(--hover); color: #50535e; font-size: 11px; font-weight: 500; }
+.badge.executando, .badge.na_fila { background: var(--accent-soft); color: var(--accent); }
+.badge.concluida { background: #edf4ef; color: var(--ok); }
+.badge.falhou, .badge.interrompida { background: #fbefef; color: var(--bad); }
+.log { margin: 0; border: 0; border-radius: 0 0 6px 6px; background: #222329; color: #e3e4e9; padding: 20px; min-height: 220px; max-height: 440px; font: 12px/1.7 Consolas, monospace; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; }
+.history { display: grid; }
+.job { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 20px; width: 100%; justify-content: space-between; text-align: left; background: var(--paper); }
+.job small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
+.job strong { font-size: 12px; font-weight: 550; }
+.empty { color: var(--muted); padding: 20px; font-size: 13px; }
+.table-wrap { overflow: auto; max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--canvas); white-space: nowrap; }
+td { font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--canvas); }
+.toast { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: min(420px, calc(100vw - 32px)); padding: 12px 16px; color: var(--paper); background: var(--ink); border-radius: 6px; opacity: 0; pointer-events: none; }
+.toast.show { opacity: 1; }
+.toast.error { background: var(--bad); }
+.filterbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.filterbar label { flex: 1 1 120px; }
+.filterbar .search-field { flex: 2 1 240px; }
+.explorer { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
+.list-panel { border-right: 1px solid var(--line); min-width: 0; }
+.list-heading { padding: 16px; border-bottom: 1px solid var(--line); }
+.list-heading h2 { font-size: 13px; }
+.message { font-size: 12px; }
+.list-heading .message { margin-top: 4px; }
+.process-list { display: grid; max-height: 680px; overflow: auto; }
+.process-row { display: block; width: 100%; text-align: left; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-weight: 400; }
+.process-row strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.process-row small { display: block; font-size: 11px; margin-top: 5px; line-height: 1.6; }
+.process-row.selected, .process-row.selected:hover { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.pager button { font-size: 11px; min-height: 32px; padding: 5px 8px; }
+.dossier { min-width: 0; padding: 24px 28px 40px; }
+.dossier > .message { margin-bottom: 16px; }
+.detail-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.detail-head h2 { font-size: clamp(17px, 1.7vw, 23px); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.section-nav { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 20px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.section-nav a { color: var(--muted); text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; font-size: 11px; }
+.section-nav a:hover { color: var(--ink); }
+.notice { padding: 12px 14px; background: #faf7ef; border: 1px solid #eee5d4; border-radius: 4px; font-size: 12px; color: var(--warn); margin: 16px 0; }
+.section { padding-top: 24px; margin-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 20px; }
+.section > h3 { font-size: 16px; margin-bottom: 12px; }
+.section > p { margin-bottom: 16px; }
+.entry { padding: 20px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.entry:last-child { border-bottom: 0; }
+.entry h4 { margin-bottom: 10px; }
+.entry p { margin: 8px 0; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; margin: 16px 0; }
+.facts > div { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.facts small { display: block; font-size: 11px; margin-bottom: 4px; }
+.text, .corpus-body pre { font: 14px/1.85 'Segoe UI', system-ui, sans-serif; max-width: 82ch; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); background: var(--paper); padding: 16px 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 480px; font: 11px/1.7 Consolas, monospace; color: #51545f; background: var(--canvas); padding: 16px; border-radius: 4px; }
+details summary { min-height: 36px; padding: 8px 0; cursor: pointer; font-weight: 500; font-size: 12px; color: var(--muted); }
+.document-body { margin: 12px 0; border-block: 1px solid var(--line); }
+.events { max-height: 460px; overflow: auto; }
+.event { position: relative; padding: 12px 0 12px 20px; border-left: 1px solid var(--line); margin-left: 4px; font-size: 13px; }
+.event::before { content: ''; position: absolute; left: -3px; top: 20px; width: 5px; height: 5px; border-radius: 50%; background: #a8abb5; }
+.event small { font-size: 11px; }
+.review-state { padding: 12px 14px; background: var(--canvas); border-radius: 4px; font-size: 12px; }
+.evidence { padding: 16px; background: var(--canvas); border-radius: 4px; margin: 12px 0; font-size: 12px; overflow-wrap: anywhere; }
+.evidence blockquote { margin: 12px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.8; }
+.gaps { padding-left: 18px; color: var(--muted); font-size: 13px; }
+.gaps li { margin: 8px 0; }
+.back-to-list { display: none; }
+.corpus-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 24px; align-items: start; }
+.corpus-list article { border-bottom: 1px solid var(--line); padding: 20px; overflow-wrap: anywhere; }
+.corpus-list article:last-child { border-bottom: 0; }
+.corpus-list h2 { font-size: 14px; margin-bottom: 8px; }
+.document-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 16px; align-items: start; }
+.document-row > div { min-width: 0; font-size: 12px; }
+.corpus-list small { font-size: 11px; display: block; }
+.corpus-list p { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.corpus-list a { font-size: 12px; }
+.context-note { padding: 16px; font-size: 12px; color: var(--muted); }
+.context-note h3 { color: var(--ink); margin-bottom: 8px; }
+.context-note p + p { margin-top: 12px; }
+.context-data { margin-top: 24px; }
+.context-data > summary { font-size: 13px; color: var(--ink); border-bottom: 1px solid var(--line); }
+[aria-busy=true] { cursor: progress; }
+@media (max-width: 1199px) {
+  .app-sidebar { width: 190px; }
+  .workspace { margin-left: 190px; }
+  main.page { padding: 24px; }
+  .topbar { padding-inline: 24px; }
+  .operations-grid { grid-template-columns: 1fr; }
+  .explorer { grid-template-columns: 270px minmax(0, 1fr); }
+  .dossier { padding: 20px; }
+  .corpus-layout { grid-template-columns: 1fr; }
+  .corpus-context { display: none; }
+}
+@media (max-width: 900px) {
+  .app-sidebar { position: static; width: auto; padding: 12px 20px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .app-brand { padding: 0; }
+  .app-brand small, .nav-label, .sidebar-note { display: none; }
+  .app-sidebar-top { display: flex; align-items: center; justify-content: space-between; }
+  .mobile-nav-toggle { display: inline-flex; min-height: 36px; font-size: 12px; }
+  .app-nav { display: flex; gap: 4px; margin-top: 12px; }
+  .app-nav a { flex: 1; justify-content: center; min-height: 40px; padding: 8px; }
+  .app-sidebar[data-collapsed=true] .app-nav { display: none; }
+  .workspace { margin-left: 0; }
+  .topbar { height: 42px; }
+  .explorer { grid-template-columns: 1fr; }
+  .list-panel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .process-list { max-height: 370px; }
+  .back-to-list { display: inline-flex; min-height: 44px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+  .page-heading { align-items: start; }
+  .heading-actions { flex-wrap: wrap; justify-content: end; }
+}
+@media (max-width: 600px) {
+  :root { font-size: 14px; }
+  .app-sidebar { padding: 12px 16px; }
+  .app-nav a { font-size: 12px; gap: 6px; }
+  main.page { padding: 20px 16px 36px; }
+  .topbar { padding-inline: 16px; }
+  .local-label { display: none; }
+  h1 { font-size: 22px; }
+  .page-heading { flex-direction: column; gap: 16px; margin-bottom: 20px; }
+  .summary-strip, .stats, .metrics { gap: 12px 24px; }
+  .stat, .metric { min-width: 90px; }
+  .metric strong, .stat strong { font-size: 17px; }
+  .form-grid, .facts { grid-template-columns: 1fr; }
+  .panel-head, .panel-body, .form-section, .utility-row { padding: 16px; }
+  .utility-row, .form-footer { flex-direction: column; align-items: stretch; }
+  .form-footer { padding: 16px; }
+  button, .button, input:not([type=checkbox]), select { min-height: 44px; }
+  .checks label, .inline-check { min-height: 36px; }
+  .filterbar { padding: 16px; gap: 12px; }
+  .filterbar label { flex-basis: 130px; }
+  .filterbar .search-field { flex-basis: 100%; }
+  .filterbar button { width: 100%; }
+  .dossier { padding: 16px; }
+  .section-nav { gap: 0 16px; }
+  .section-nav a { min-height: 44px; }
+  .corpus-list article { padding: 16px; }
+  .document-row { grid-template-columns: 1fr; gap: 8px; }
+}
+</style></head>
+<body data-screen="processes">
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+<aside class="app-sidebar" aria-label="Navegação do painel">
+  <div class="app-sidebar-top"><a class="app-brand" href="/"><span class="app-mark" aria-hidden="true">B</span><span>BPC Jud<small>Pesquisa judicial</small></span></a><button class="mobile-nav-toggle" id="nav-toggle" type="button" aria-expanded="true" aria-controls="app-nav">Menu</button></div>
+  <div class="nav-label">Área de trabalho</div>
+  <nav class="app-nav" id="app-nav" aria-label="Principal"><a href="/admin/analise" aria-current="page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 2.5v11m0-7h7.5"/></svg><span>Análise de casos</span></a><a href="/admin/coleta"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/><path d="M5 2v4m6 0v4m-4 0v4"/></svg><span>Coletas</span></a><a href="/admin/documentos"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 2.5h6l3 3v8H4z"/><path d="M10 2.5v3h3M6 8h5M6 10.5h4"/></svg><span>Corpus documental</span></a></nav>
+  <div class="sidebar-note"><a href="/docs" target="_blank" rel="noopener noreferrer">Documentação da API ↗</a>Resultados automáticos exigem revisão humana. Documentos públicos não são autos completos.</div>
+</aside>
+<div class="workspace"><header class="topbar"><div class="breadcrumbs"><span>Pesquisa BPC</span><span aria-hidden="true">/</span><strong>Processos</strong></div><span class="local-label">Ambiente de pesquisa</span></header>
+<main class="page" id="main-content" tabindex="-1">
+<div class="page-heading"><div><h1>Processos</h1><p>Da capa DataJud à evidência documental, com origem e limitações à vista.</p></div><a class="button" href="/admin/documentos">Consultar corpus</a></div>
+<div class="stats" id="stats" aria-label="Contagens da base"></div>
+<p class="research-note">Candidatos BPC/LOAS. Assunto não confirma concessão; sede do órgão não é residência. A inclusão na amostra exige revisão humana.</p>
+<section class="surface" aria-label="Pesquisa de processos"><form class="filterbar" id="filters"><label class="search-field">Número CNJ ou início<input id="number-filter" type="search" placeholder="Pesquisar número do processo" autocomplete="off"></label><label>Tribunal<select id="tribunal-filter"><option value="">Todos</option><option>TRF1</option><option>TRF2</option><option>TRF3</option><option>TRF4</option><option>TRF5</option><option>TRF6</option><option>STJ</option></select></label><label>Órgão julgador<select id="municipio-filter"><option value="">Todas as localidades</option><option value="743">Brasília/DF · 743</option></select></label><label>Grau<select id="grau-filter"><option value="">Todos</option><option value="G1">1º grau · G1</option><option value="JE">Juizado · JE</option><option value="G2">2º grau · G2</option><option value="TR">Turma recursal · TR</option></select></label><label>Publicação<select id="communication-filter"><option value="">Todas</option><option value="true">Com publicação</option><option value="false">Sem publicação</option></select></label><button type="submit">Pesquisar</button></form></section>
+<div class="explorer"><section class="list-panel" id="results" aria-label="Lista de processos"><div class="list-heading"><h2>Resultados da pesquisa</h2><p id="list-status" class="message" role="status" aria-live="polite">Carregando…</p></div><div class="process-list" id="process-list"></div><div class="pager"><button id="previous" class="secondary" type="button">Anterior</button><span id="page-label"></span><button id="next" class="secondary" type="button">Próxima</button></div></section><section class="dossier" id="dossier" aria-label="Dossiê do processo" tabindex="-1"><a class="back-to-list" href="#results">Voltar aos resultados</a><p id="detail-status" class="message" role="status" aria-live="polite"></p><div id="detail" class="message">Selecione um processo. A capa, os documentos, as extrações e as pendências aparecerão aqui.</div></section></div></main></div>
+<script data-panel-shell>(() => { const toggle = document.getElementById('nav-toggle'); toggle.addEventListener('click', () => { const collapsed = toggle.getAttribute('aria-expanded') === 'true'; toggle.setAttribute('aria-expanded', String(!collapsed)); document.querySelector('.app-sidebar').dataset.collapsed = String(collapsed); }); })();</script>
+<script>const $ = id => document.getElementById(id);
     const fmt = value => new Intl.NumberFormat('pt-BR').format(value ?? 0);
-    const when = value => value ? new Date(value).toLocaleString('pt-BR') : 'Não informado';
-    const state = {offset: 0, limit: 25, total: 0, selected: null};
+    const when = value => { if (!value) return 'Não informado'; const date = new Date(/^\d{4}-\d\d-\d\dT/.test(value) && !/(Z|[+-]\d\d:\d\d)$/.test(value) ? value + 'Z' : value); return Number.isNaN(date.getTime()) ? 'Data não interpretável' : date.toLocaleString('pt-BR', {timeZone: 'UTC'}) + ' UTC'; };
+    const state = {offset: 0, limit: 25, total: 0, selected: null, listRequest: 0, detailRequest: 0};
     const el = (tag, text, className) => { const node = document.createElement(tag); if (text != null) node.textContent = String(text); if (className) node.className = className; return node; };
     const add = (parent, tag, text, className) => { const node = el(tag, text, className); parent.append(node); return node; };
     async function get(url) { const response = await fetch(url); if (!response.ok) { let reason = `HTTP ${response.status}`; try { reason = (await response.json()).detail || reason; } catch {} throw new Error(reason); } return response.json(); }
     function fact(parent, label, value) { const box = add(parent, 'div'); add(box, 'small', label); add(box, 'span', value ?? 'Não informado'); }
     function empty(parent, text) { add(parent, 'p', text, 'muted'); }
     function raw(parent, payload) { const details = add(parent, 'details'); add(details, 'summary', 'Ver payload original'); add(details, 'pre', JSON.stringify(payload ?? {}, null, 2)); }
+    function section(parent, id, title) { const node = add(parent, 'section', null, 'section'); node.id = id; add(node, 'h3', title); return node; }
+    function sourceLink(parent, value, label) { if (!value) return; try { const url = new URL(value); if (!['https:', 'http:'].includes(url.protocol)) return; const link = add(parent, 'a', label); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } catch {} }
+    function readable(value) { if (value == null) return 'Não informado'; return typeof value === 'object' ? JSON.stringify(value) : String(value).replaceAll('_', ' '); }
     async function loadStats() {
       try {
         const data = await get('/resumo'); const t = data.totais; const stats = $('stats'); stats.replaceChildren();
@@ -113,6 +277,7 @@
       } catch (error) { $('stats').textContent = `Não foi possível consultar o resumo: ${error.message}`; }
     }
     async function loadList() {
+      const request = ++state.listRequest;
       const params = new URLSearchParams({limit: state.limit, offset: state.offset});
       const number = $('number-filter').value.trim(), tribunal = $('tribunal-filter').value, communication = $('communication-filter').value;
       const municipio = $('municipio-filter').value, grau = $('grau-filter').value;
@@ -122,37 +287,47 @@
       if (grau) params.set('grau', grau);
       if (communication) params.set('com_comunicacao', communication);
       $('list-status').textContent = 'Buscando processos…'; $('list-status').className = 'message';
+      $('process-list').replaceChildren(); $('process-list').setAttribute('aria-busy', 'true');
+      $('previous').disabled = true; $('next').disabled = true; $('page-label').textContent = '';
       try {
-        const data = await get(`/admin/api/processos?${params}`); state.total = data.total;
+        const data = await get(`/admin/api/processos?${params}`); if (request !== state.listRequest) return; state.total = data.total;
         const list = $('process-list'); list.replaceChildren();
         data.items.forEach(item => {
           const button = add(list, 'button', null, 'process-row' + (item.numero_processo === state.selected ? ' selected' : ''));
           button.type = 'button'; add(button, 'strong', item.numero_processo);
+          button.setAttribute('aria-pressed', String(item.numero_processo === state.selected));
+          button.setAttribute('aria-controls', 'dossier');
           add(button, 'small', `${item.tribunais || 'Tribunal não informado'} · ${fmt(item.registros_datajud)} registro(s) DataJud · ${fmt(item.comunicacoes_pje)} publicação(ões) · ${fmt(item.extracoes_ia)} extração(ões)`);
-          button.addEventListener('click', () => loadDetail(item.numero_processo));
+          button.addEventListener('click', () => loadDetail(item.numero_processo, true));
         });
         $('list-status').textContent = data.total ? `${fmt(data.total)} processo(s) encontrados` : 'Nenhum processo encontrado com esses filtros.';
         $('page-label').textContent = data.total ? `${fmt(state.offset + 1)}–${fmt(state.offset + data.items.length)} de ${fmt(data.total)}` : '0 de 0';
         $('previous').disabled = state.offset === 0;
         $('next').disabled = state.offset + data.items.length >= data.total;
-      } catch (error) { $('list-status').textContent = `Não foi possível listar processos: ${error.message}`; $('list-status').className = 'message error'; }
+      } catch (error) { if (request !== state.listRequest) return; $('list-status').textContent = `Não foi possível listar processos: ${error.message}. Use Buscar para tentar novamente.`; $('list-status').className = 'message error'; }
+      finally { if (request === state.listRequest) $('process-list').setAttribute('aria-busy', 'false'); }
     }
-    async function loadDetail(number) {
-      state.selected = number; $('detail').textContent = 'Carregando processo…';
-      document.querySelectorAll('.process-row').forEach(node => node.classList.toggle('selected', node.querySelector('strong')?.textContent === number));
-      try { renderDetail(await get(`/admin/api/processos/${encodeURIComponent(number)}`)); history.replaceState(null, '', `#${encodeURIComponent(number)}`); }
-      catch (error) { $('detail').textContent = `Não foi possível abrir o processo: ${error.message}`; $('detail').className = 'message error'; }
+    async function loadDetail(number, focus = false) {
+      const request = ++state.detailRequest;
+      state.selected = number; $('detail').replaceChildren(); $('detail-status').textContent = 'Carregando processo…'; $('detail-status').className = 'message'; $('detail').setAttribute('aria-busy', 'true');
+      document.querySelectorAll('.process-row').forEach(node => { const selected = node.querySelector('strong')?.textContent === number; node.classList.toggle('selected', selected); node.setAttribute('aria-pressed', String(selected)); });
+      try { const data = await get(`/admin/api/processos/${encodeURIComponent(number)}`); if (request !== state.detailRequest) return; renderDetail(data); loadDocumentAnalysis(number, request); history.replaceState(null, '', `#${encodeURIComponent(number)}`); $('detail-status').textContent = 'Processo carregado.'; if (focus) { $('dossier').focus({preventScroll: true}); if (matchMedia('(max-width: 900px)').matches) $('dossier').scrollIntoView(); } }
+      catch (error) { if (request !== state.detailRequest) return; $('detail-status').textContent = `Não foi possível abrir o processo: ${error.message}`; $('detail-status').className = 'message error'; const retry = add($('detail'), 'button', 'Tentar abrir novamente', 'secondary'); retry.type = 'button'; retry.addEventListener('click', () => loadDetail(number, focus)); }
+      finally { if (request === state.detailRequest) $('detail').setAttribute('aria-busy', 'false'); }
     }
     function renderDetail(data) {
       const root = $('detail'); root.className = ''; root.replaceChildren();
       const head = add(root, 'div', null, 'detail-head'); add(head, 'h2', data.numero_processo); add(head, 'span', `${data.registros_datajud.length} registro(s) DataJud`, 'pill');
+      const navigation = add(root, 'nav', null, 'section-nav'); navigation.setAttribute('aria-label', 'Seções do processo');
+      [['cover', 'Capa DataJud'], ['timeline', 'Linha do tempo'], ['documents', 'Documentos'], ['analysis', 'Triagem IA'], ['document-analysis', 'Análise documental'], ['review', 'Revisão']].forEach(([id, title]) => { const link = add(navigation, 'a', title); link.href = '#' + id; link.addEventListener('click', event => { event.preventDefault(); const target = $(id); target.tabIndex = -1; target.focus(); target.scrollIntoView(); }); });
       const notice = add(root, 'div', null, 'notice');
       notice.textContent = data.extracoes_ia.length ? 'Há extrações registradas abaixo. Confira o texto de origem e o status de validação antes de interpretar o resultado.' : 'Não há resultado jurídico extraído neste processo. Uma movimentação “Sentença” sozinha não indica concessão ou negativa.';
 
-      const recordSection = add(root, 'section', null, 'section'); add(recordSection, 'h3', 'Dados do DataJud');
+      const recordSection = section(root, 'cover', 'Capa DataJud');
+      add(recordSection, 'p', 'Órgão julgador e assuntos descrevem o registro de origem. Não confirmam residência, elegibilidade ou concessão.', 'muted');
       if (!data.registros_datajud.length) empty(recordSection, 'Nenhum registro DataJud associado.');
       data.registros_datajud.forEach(record => {
-        const card = add(recordSection, 'article', null, 'entry'); add(card, 'h3', `${record.tribunal || 'Tribunal desconhecido'} · ${record.grau || 'Grau não informado'}`);
+        const card = add(recordSection, 'article', null, 'entry'); card.id = `record-${record.id}`; add(card, 'h4', `${record.tribunal || 'Tribunal desconhecido'} · ${record.grau || 'Grau não informado'} · registro ${record.id}`);
         const facts = add(card, 'div', null, 'facts');
         fact(facts, 'Classe', `${record.classe.codigo ?? '—'} · ${record.classe.nome || 'Não informada'}`);
         fact(facts, 'Órgão julgador', record.orgao_julgador.nome || 'Não informado');
@@ -161,44 +336,160 @@
         fact(facts, 'Sigilo', record.nivel_sigilo === 0 ? 'Público' : record.nivel_sigilo ?? 'Não informado');
         fact(facts, 'Coletado em', when(record.coletado_em));
         add(card, 'p', `Assuntos: ${record.assuntos.map(item => `${item.codigo} · ${item.nome || 'sem nome'}`).join('; ') || 'não informados'}`);
-        const events = add(card, 'details'); add(events, 'summary', `${fmt(record.movimentacoes.length)} movimentação(ões)`);
-        const list = add(events, 'div', null, 'events');
-        record.movimentacoes.forEach(item => { const row = add(list, 'div', null, 'event'); add(row, 'small', when(item.data_hora)); add(row, 'div', `${item.codigo ?? '—'} · ${item.nome || 'Sem nome'}`); if (item.complementos?.length) add(row, 'small', `Complementos: ${JSON.stringify(item.complementos)}`); });
         raw(card, record.payload_original);
       });
 
-      const commSection = add(root, 'section', null, 'section'); add(commSection, 'h3', 'Comunica PJe: atos publicados');
+      const timeline = section(root, 'timeline', 'Linha do tempo');
+      add(timeline, 'p', 'Movimentações DataJud em ordem de data, da mais recente à mais antiga. Movimentos de registros distintos são preservados; não são decisões interpretadas.', 'muted');
+      const movements = data.registros_datajud.flatMap(record => record.movimentacoes.map(item => ({...item, record})));
+      movements.sort((a, b) => (Date.parse(b.data_hora) || 0) - (Date.parse(a.data_hora) || 0));
+      if (!movements.length) empty(timeline, 'Nenhuma movimentação registrada.');
+      const events = add(timeline, 'div', null, 'events'); events.tabIndex = 0; events.setAttribute('role', 'region'); events.setAttribute('aria-label', 'Movimentações do DataJud, área de rolagem');
+      movements.forEach(item => { const row = add(events, 'article', null, 'event'); add(row, 'small', when(item.data_hora)); add(row, 'div', `${item.codigo ?? 'Não informado'} · ${item.nome || 'Sem nome'}`); add(row, 'small', `${item.record.tribunal || 'Tribunal não informado'} / ${item.record.grau || 'Grau não informado'} · registro ${item.record.id}`); });
+
+      const commSection = section(root, 'documents', 'Documentos e publicações');
+      add(commSection, 'h4', 'Comunica PJe: atos publicados');
       const consult = data.consulta_comunica;
       add(commSection, 'p', consult ? `Consulta: ${consult.status} · ${when(consult.consultado_em)} · ${fmt(consult.quantidade)} item(ns)${consult.erro ? ` · erro: ${consult.erro}` : ''}` : 'Ainda não há consulta ao Comunica PJe registrada.');
       if (!data.comunicacoes_pje.length) empty(commSection, 'Nenhuma publicação vinculada a este número no banco.');
       data.comunicacoes_pje.forEach(item => {
-        const card = add(commSection, 'article', null, 'entry'); add(card, 'h3', `${item.tipo_documento || item.tipo_comunicacao || 'Ato publicado'} · ${item.data_disponibilizacao || 'Data não informada'}`);
+        const card = add(commSection, 'article', null, 'entry'); card.id = `communication-${item.id}`; add(card, 'h4', `${item.tipo_documento || item.tipo_comunicacao || 'Ato publicado'} · ${item.data_disponibilizacao || 'Data não informada'}`);
         add(card, 'p', item.orgao_nome || 'Órgão não informado', 'muted');
-        if (item.texto) add(card, 'div', item.texto, 'text'); else empty(card, 'O texto da publicação não foi recebido.');
+        const body = add(card, 'details', null, 'document-body'); add(body, 'summary', `Ler texto publicado · comunicação ${item.id}`);
+        if (item.texto) add(body, 'div', item.texto, 'text'); else empty(body, 'O texto da publicação não foi recebido.');
         if (item.link) { try { const url = new URL(item.link); if (['https:', 'http:'].includes(url.protocol)) { const link = add(card, 'a', 'Abrir publicação original ↗'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } } catch {} }
         raw(card, item.payload_original);
       });
 
-      const extractionSection = add(root, 'section', null, 'section'); add(extractionSection, 'h3', 'Dados extraídos por IA');
-      (data.documentos_publicos || []).forEach(item => {const card = add(extractionSection, 'article', null, 'entry'); add(card, 'h3', `Documento público vinculado por CNJ · ${item.fonte}`); add(card, 'p', 'Vínculo de identidade, não confirmação de concessão inicial ou resultado.'); add(card, 'div', item.ementa || item.decisao || item.texto || 'Sem texto publicado', 'text');});
-      if (!data.extracoes_ia.length) empty(extractionSection, 'Nenhuma extração de IA registrada. Ainda não há classificação de decisão ou resultado jurídico no banco para este processo.');
-      data.extracoes_ia.forEach(item => {
-        const card = add(extractionSection, 'article', null, 'entry'); add(card, 'h3', `${item.tipo_extracao} · ${item.status_validacao}`);
+      add(commSection, 'h4', 'Documentos públicos vinculados por CNJ');
+      if (!data.documentos_publicos?.length) empty(commSection, 'Nenhum documento público vinculado no banco. Isso não significa ausência de documentos nos autos.');
+      (data.documentos_publicos || []).forEach(item => {
+        const card = add(commSection, 'article', null, 'entry'); card.id = `document-${item.id}`;
+        add(card, 'h4', `${item.tipo_documento || 'Documento público'} · ${item.fonte || 'Fonte não informada'}`);
+        add(card, 'p', item.fonte === 'pje_trf1' ? 'Documento próprio publicado no PJe, vinculado por CNJ. Não equivale aos autos completos nem confirma concessão inicial.' : 'Corpus complementar: vínculo explícito por CNJ, sem inclusão automática na amostra ou confirmação do resultado.', 'muted');
+        const metadata = add(card, 'div', null, 'facts'); fact(metadata, 'ID da fonte', item.documento_id); fact(metadata, 'Coletado em', when(item.coletado_em)); fact(metadata, 'Data de publicação', item.data_publicacao); fact(metadata, 'Data da decisão', item.data_decisao);
+        if (item.revisao_privacidade === 'pendente') add(card, 'p', 'Texto e links indisponíveis: revisão de privacidade pendente na API.', 'notice');
+        else { const body = add(card, 'details', null, 'document-body'); add(body, 'summary', 'Ler conteúdo disponível'); if (item.ementa) { add(body, 'h4', 'Ementa'); add(body, 'div', item.ementa, 'text'); } if (item.decisao) { add(body, 'h4', 'Decisão publicada'); add(body, 'div', item.decisao, 'text'); } if (item.texto) add(body, 'div', item.texto, 'text'); if (!item.ementa && !item.decisao && !item.texto) empty(body, 'Texto não disponibilizado pelo endpoint.'); sourceLink(card, item.recurso_url || item.url_origem, 'Abrir documento na fonte oficial ↗'); }
+        const provenance = add(card, 'details'); add(provenance, 'summary', 'Identificação e proveniência'); add(provenance, 'p', `ID local: ${item.id} · SHA-256: ${item.hash_conteudo || 'Não informado'}`);
+      });
+
+      const extractionSection = section(root, 'analysis', 'Explicação e extrações de IA');
+      add(extractionSection, 'p', 'Resultados automáticos para orientar a leitura. Modelo, versão e evidências devem ser conferidos; resumo e confiança não substituem revisão humana.', 'muted');
+      const historicalExtractions = data.extracoes_ia.filter(item => item.tipo_extracao !== 'documento_bpc_texto');
+      if (!historicalExtractions.length) empty(extractionSection, 'Nenhuma triagem de metadados ou análise de comunicação registrada.');
+      historicalExtractions.forEach(item => {
+        const card = add(extractionSection, 'article', null, 'entry'); add(card, 'h4', readable(item.tipo_extracao));
+        add(card, 'p', `Status registrado na extração: ${item.status_validacao || 'Não informado'}`, 'pill');
         add(card, 'p', `Modelo ${item.modelo} · prompt ${item.versao_prompt} · confiança ${item.confianca ?? 'não informada'} · ${when(item.criado_em)}`, 'muted');
         const summary = item.resultado?.resumo_caso || item.resultado?.observacao_curta;
         if (summary) { add(card, 'h4', 'Resumo do caso'); add(card, 'div', summary, 'text'); }
+        else empty(card, 'Resumo não registrado nesta versão da extração.');
+        const fields = add(card, 'div', null, 'facts');
+        [['escopo_pedido', 'Escopo provável do pedido'], ['aderencia_geografica', 'Aderência geográfica'], ['desfecho', 'Desfecho sugerido'], ['nivel_evidencia', 'Nível de evidência'], ['motivo_judicializacao', 'Motivo da judicialização'], ['motivo_administrativo_negativa', 'Motivo administrativo da negativa'], ['resultado_judicial', 'Resultado judicial sugerido']].forEach(([key, label]) => { if (item.resultado?.[key] != null) fact(fields, label, readable(item.resultado[key])); });
+        add(card, 'h4', 'Evidências declaradas pela extração');
+        const evidence = item.resultado?.evidencias;
+        if (!Array.isArray(evidence) || !evidence.length) empty(card, 'Nenhuma evidência registrada. Não há sustentação exibida para conferir as classificações.');
+        else evidence.forEach(ev => {
+          const node = add(card, 'div', null, 'evidence');
+          if (!ev || typeof ev !== 'object') { add(node, 'p', readable(ev)); return; }
+          add(node, 'strong', `Sustenta: ${readable(ev.sustenta)}`);
+          if (ev.trecho_sustentacao) add(node, 'blockquote', ev.trecho_sustentacao);
+          if (ev.campo) add(node, 'p', `Campo de origem: ${ev.campo}`);
+          if (ev.referencia) add(node, 'p', `Referência: ${readable(ev.referencia)}`);
+          if (ev.hash_conteudo) add(node, 'p', `SHA-256 informado: ${ev.hash_conteudo}`, 'muted');
+          let target = null;
+          if (ev.registro_id != null && data.registros_datajud.some(record => record.id === ev.registro_id)) target = `record-${ev.registro_id}`;
+          if (ev.comunicacao_id != null && data.comunicacoes_pje.some(comm => comm.id === ev.comunicacao_id)) target = `communication-${ev.comunicacao_id}`;
+          if (target) { const link = add(node, 'a', 'Conferir fonte neste processo'); link.href = '#' + target; link.addEventListener('click', event => { event.preventDefault(); const source = $(target); source.tabIndex = -1; source.querySelector('.document-body')?.setAttribute('open', ''); source.focus(); source.scrollIntoView(); }); }
+          else empty(node, 'Fonte não resolvida neste contrato de API. Confira os identificadores no resultado completo; vínculo e citação não foram validados pela interface.');
+        });
+        add(card, 'h4', 'Lacunas apontadas pela IA');
+        if (Array.isArray(item.resultado?.lacunas) && item.resultado.lacunas.length) { const gaps = add(card, 'ul', null, 'gaps'); item.resultado.lacunas.forEach(gap => add(gaps, 'li', readable(gap))); }
+        else empty(card, 'Nenhuma lacuna informada nesta extração. Isso não comprova completude dos dados.');
         const technical = add(card, 'details'); add(technical, 'summary', 'Ver classificação, evidências e lacunas');
         add(technical, 'pre', JSON.stringify(item.resultado, null, 2));
       });
-      const chunks = add(root, 'section', null, 'section'); add(chunks, 'h3', `Trechos preparados para IA (${data.documento_chunks.length})`);
+      const documentary = section(root, 'document-analysis', 'Análise documental PJe');
+      add(documentary, 'p', 'Consultando disponibilidade da análise documental…', 'message');
+      const review = section(root, 'review', 'Estado da revisão e inclusão na amostra');
+      add(review, 'p', 'Revisão humana: comprovação indisponível neste endpoint.', 'review-state');
+      add(review, 'p', 'A API não informa responsável, data, decisão de inclusão ou histórico de revisão humana. O status da extração e o campo revisao_humana não comprovam que alguém revisou o caso. Não há ação de aprovação disponível nesta tela.', 'muted');
+      add(review, 'h4', 'Pendências para a pesquisa');
+      const pending = add(review, 'ul', null, 'gaps');
+      ['Confirmar pedido de concessão inicial e excluir revisão ou cessação.', 'Confirmar pertinência ao recorte territorial com evidência adequada; sede do órgão não é residência.', 'Conferir origem, conteúdo e limitações dos documentos antes de interpretar o resultado.'].forEach(text => add(pending, 'li', text));
+      const chunks = add(root, 'details', null, 'section'); add(chunks, 'summary', `Trechos preparados para IA (${data.documento_chunks.length})`);
       if (!data.documento_chunks.length) empty(chunks, 'Nenhum trecho de publicação processado.');
       data.documento_chunks.forEach(item => { const card = add(chunks, 'article', null, 'entry'); add(card, 'p', `Publicação ${item.comunicacao_id} · trecho ${item.numero_chunk} · ${item.modelo_embedding} / ${item.versao_pipeline}`, 'muted'); add(card, 'div', item.texto, 'text'); });
+    }
+    async function loadDocumentAnalysis(number, request, includeText = false) {
+      const root = $('document-analysis'); if (!root) return;
+      root.setAttribute('aria-busy', 'true');
+      try {
+        const data = await get(`/admin/api/processos/${encodeURIComponent(number)}/analise-documental${includeText ? '?incluir_texto_local=true' : ''}`);
+        if (request !== state.detailRequest) return;
+        renderDocumentAnalysis(root, data, number, request);
+      } catch (error) {
+        if (request !== state.detailRequest) return;
+        root.replaceChildren(); add(root, 'h3', 'Análise documental PJe');
+        add(root, 'p', `Análise documental indisponível: ${error.message}. Isso não indica ausência de extrações.`, 'message error');
+        const retry = add(root, 'button', 'Consultar disponibilidade novamente', 'secondary'); retry.type = 'button'; retry.addEventListener('click', () => loadDocumentAnalysis(number, request));
+      } finally { if (request === state.detailRequest) root.setAttribute('aria-busy', 'false'); }
+    }
+    function renderDocumentAnalysis(root, data, number, request) {
+      const textRetained = data.texto_retido !== false;
+      root.replaceChildren(); add(root, 'h3', 'Análise documental PJe');
+      add(root, 'p', 'Leitura de documentos próprios publicados no PJe. Extração automática não comprova validação humana ou inclusão definitiva na amostra.', 'muted');
+      const status = add(root, 'div', null, 'facts'); fact(status, 'Revisão humana registrada', readable(data.revisao_humana)); fact(status, 'Revisão de privacidade', readable(data.revisao_privacidade));
+      if (textRetained) {
+        add(root, 'p', 'Resumos, narrativas e citações estão retidos por privacidade. A consulta abaixo solicita leitura local explícita; não executa IA nem autoriza envio externo.', 'notice');
+        if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) { const button = add(root, 'button', 'Solicitar leitura local dos textos', 'secondary'); button.type = 'button'; button.addEventListener('click', () => { button.disabled = true; loadDocumentAnalysis(number, request, true); }); }
+        else empty(root, 'Leitura textual disponível somente por acesso local autorizado pelo backend.');
+      } else add(root, 'p', 'Leitura local solicitada. Conteúdo continua sujeito à revisão de privacidade; chamadas externas não são permitidas.', 'notice');
+      add(root, 'h4', `Documentos próprios disponíveis (${(data.documentos || []).length})`);
+      (data.documentos || []).forEach(doc => {
+        const body = add(root, 'details', null, 'document-body');
+        add(body, 'summary', `${doc.tipo_documento || 'Documento PJe'} · ID ${doc.documento_id || doc.id}`);
+        add(body, 'p', `Fonte: ${doc.fonte || 'Não informada'} · ID local: ${doc.id} · SHA-256: ${doc.hash_conteudo || 'Não informado'}`, 'muted');
+        if (!textRetained && typeof doc.texto === 'string') add(body, 'div', doc.texto, 'text');
+        else empty(body, 'Texto retido por privacidade ou não disponibilizado pelo endpoint.');
+      });
+      if (!data.extracoes?.length) empty(root, 'Nenhuma extração documental registrada para este processo. Não há resumo documental gerado.');
+      (data.extracoes || []).forEach(item => {
+        const card = add(root, 'article', null, 'entry'); add(card, 'h4', 'Extração documental registrada');
+        add(card, 'p', `Modelo ${item.modelo || 'Não informado'} · prompt ${item.versao_prompt || 'Não informado'} · ${when(item.criado_em)}`, 'muted');
+        add(card, 'p', `Status de validação: ${item.status_validacao || 'Não informado'}`);
+        const result = item.resultado || {};
+        if (!textRetained && result.resumo_caso) add(card, 'div', result.resumo_caso, 'text');
+        const fields = add(card, 'div', null, 'facts');
+        if (!textRetained) [['provavel_causa', 'Provável causa'], ['ato_administrativo', 'Ato administrativo'], ['negativa_administrativa', 'Negativa administrativa'], ['requisito_controvertido', 'Requisito controvertido'], ['fundamento_judicial', 'Fundamento judicial']].forEach(([key, label]) => { if (result[key] != null) fact(fields, label, readable(result[key])); });
+        if (result.desfecho && typeof result.desfecho === 'object') { fact(fields, 'Resultado sugerido', readable(result.desfecho.resultado)); fact(fields, 'Natureza da decisão', readable(result.desfecho.natureza)); fact(fields, 'Trânsito em julgado', readable(result.desfecho.transito_julgado)); }
+        add(card, 'h4', 'Evidências documentais');
+        if (!result.evidencias?.length) empty(card, textRetained ? 'Trechos retidos. Consulte a proveniência abaixo.' : 'Nenhuma evidência documental informada.');
+        (result.evidencias || []).forEach(ev => {
+          const node = add(card, 'div', null, 'evidence'); add(node, 'strong', `Sustenta: ${readable(ev.sustenta)}`);
+          add(node, 'p', `Documento local ${ev.documento_id ?? 'Não informado'} · campo ${ev.campo || 'Não informado'} · intervalo Unicode [${ev.inicio ?? '?'}, ${ev.fim ?? '?'})`);
+          add(node, 'p', `SHA-256: ${ev.hash_conteudo || 'Não informado'}`, 'muted');
+          if (!textRetained && ev.trecho) add(node, 'blockquote', ev.trecho);
+          const doc = (data.documentos || []).find(doc => doc.id === ev.documento_id);
+          if (!textRetained && typeof doc?.texto === 'string' && Number.isInteger(ev.inicio) && Number.isInteger(ev.fim) && ev.inicio >= 0 && ev.fim > ev.inicio) {
+            const codepoints = Array.from(doc.texto);
+            const exact = ev.fim <= codepoints.length && codepoints.slice(ev.inicio, ev.fim).join('') === ev.trecho;
+            add(node, 'p', exact ? 'Trecho coincide com o intervalo do texto recebido. Isso não valida a interpretação jurídica.' : 'Atenção: trecho não coincide com o intervalo do texto recebido.', exact ? 'muted' : 'error');
+            if (ev.hash_conteudo && doc.hash_conteudo && ev.hash_conteudo !== doc.hash_conteudo) add(node, 'p', 'Atenção: o hash declarado na evidência difere da versão do documento recebido.', 'error');
+            const body = add(node, 'details', null, 'document-body'); add(body, 'summary', 'Conferir texto de origem'); add(body, 'div', doc.texto, 'text');
+          } else empty(node, 'Conferência de intervalo indisponível sem texto de origem.');
+        });
+        add(card, 'h4', 'Lacunas registradas');
+        const gaps = add(card, 'ul', null, 'gaps'); (result.lacunas || []).forEach(gap => add(gaps, 'li', readable(gap)));
+        if (!result.lacunas?.length) empty(card, 'Nenhuma lacuna exibida; isso não certifica completude.');
+        const provenance = add(card, 'details'); add(provenance, 'summary', 'Modelo, versões e proveniência documental'); add(provenance, 'pre', JSON.stringify(item.proveniencia || {}, null, 2));
+      });
+      if (data.lacunas?.length) { add(root, 'h4', 'Disponibilidade e pendências'); const gaps = add(root, 'ul', null, 'gaps'); data.lacunas.forEach(gap => add(gaps, 'li', readable(gap))); }
     }
     $('filters').addEventListener('submit', event => { event.preventDefault(); state.offset = 0; loadList(); });
     $('previous').addEventListener('click', () => { state.offset = Math.max(0, state.offset - state.limit); loadList(); });
     $('next').addEventListener('click', () => { state.offset += state.limit; loadList(); });
     loadStats(); loadList();
-    if (location.hash.length > 1) loadDetail(decodeURIComponent(location.hash.slice(1)));
-  </script>
-</body>
-</html>
+    try { const number = decodeURIComponent(location.hash.slice(1)); if (/^(\d{20}|\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4})$/.test(number)) loadDetail(number); } catch { $('detail-status').textContent = 'Referência de processo inválida na URL. Use a pesquisa.'; }
+</script>
+</body></html>

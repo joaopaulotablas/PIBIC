@@ -1,241 +1,280 @@
 <!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BPC Jud · Painel de coleta</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #17212b;
-      --muted: #66737f;
-      --line: #dce3e8;
-      --paper: #ffffff;
-      --canvas: #f3f6f7;
-      --brand: #155e63;
-      --brand-dark: #0d4448;
-      --brand-soft: #e6f4f2;
-      --ok: #18794e;
-      --warn: #a15c00;
-      --bad: #b42318;
-      --shadow: 0 12px 35px rgba(20, 42, 50, .08);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-      color: var(--ink);
-      background: var(--canvas);
-    }
-    header {
-      padding: 26px clamp(20px, 5vw, 72px);
-      color: white;
-      background: linear-gradient(125deg, #0b3e42, #157078 68%, #27868a);
-      box-shadow: var(--shadow);
-    }
-    header .top { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-    h1 { margin: 0; font-size: clamp(24px, 3vw, 34px); letter-spacing: -.04em; }
-    header p { margin: 5px 0 0; color: #d5eeee; }
-    header a { color: white; text-decoration: none; border-bottom: 1px solid #9bd0d2; }
-    main { width: min(1380px, calc(100% - 32px)); margin: 26px auto 60px; }
-    .statusbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--muted); }
-    .dot { width: 10px; height: 10px; border-radius: 99px; background: #aeb8be; }
-    .dot.online { background: #2bb673; box-shadow: 0 0 0 4px rgba(43,182,115,.14); }
-    .dot.offline { background: var(--bad); box-shadow: 0 0 0 4px rgba(180,35,24,.12); }
-    .metrics { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 12px; }
-    .metric, .panel, .step { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
-    .metric { padding: 18px; }
-    .metric span { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
-    .metric strong { display: block; margin-top: 4px; font-size: 27px; letter-spacing: -.04em; }
-    h2 { margin: 0 0 16px; font-size: 19px; letter-spacing: -.02em; }
-    h3 { margin: 0 0 7px; font-size: 15px; }
-    .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 18px 0; }
-    .step { padding: 15px; position: relative; overflow: hidden; }
-    .step::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: #b9c3c8; }
-    .step.done::before { background: var(--ok); }
-    .step.active::before { background: #238b91; }
-    .step small { color: var(--muted); }
-    .step .number { font-size: 11px; font-weight: 800; color: var(--brand); letter-spacing: .1em; }
-    .layout { display: grid; grid-template-columns: minmax(450px, 1.1fr) minmax(420px, .9fr); gap: 18px; }
-    .panel { padding: 20px; margin-bottom: 18px; }
-    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .action { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fbfcfc; }
-    .action.full { grid-column: 1 / -1; }
-    label { display: block; color: var(--muted); font-size: 13px; margin: 10px 0 5px; }
-    input[type="number"], select { width: 100%; border: 1px solid #bdc8ce; border-radius: 8px; padding: 9px 10px; font: inherit; background: white; }
-    input:focus { outline: 2px solid rgba(21,94,99,.25); border-color: var(--brand); }
-    .checks { display: flex; flex-wrap: wrap; gap: 8px 13px; }
-    .checks label, .inline-check { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ink); }
-    .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
-    button { border: 0; border-radius: 9px; padding: 10px 14px; font: 700 13px/1.2 inherit; cursor: pointer; transition: .15s ease; }
-    button:hover { transform: translateY(-1px); }
-    button:disabled { cursor: wait; opacity: .55; transform: none; }
-    .primary { color: white; background: var(--brand); margin-top: 14px; }
-    .primary:hover { background: var(--brand-dark); }
-    .secondary { color: var(--brand-dark); background: var(--brand-soft); margin-top: 14px; }
-    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-    .badge { display: inline-flex; align-items: center; border-radius: 99px; padding: 4px 9px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; background: #e8edf0; color: #50606b; }
-    .badge.executando, .badge.na_fila { background: #e1f3f4; color: #0d666b; }
-    .badge.concluida { background: #e3f5ea; color: var(--ok); }
-    .badge.falhou, .badge.interrompida { background: #fde9e7; color: var(--bad); }
-    pre { min-height: 250px; max-height: 470px; overflow: auto; margin: 14px 0 0; padding: 15px; border-radius: 10px; color: #d7e6e7; background: #122528; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
-    .history { display: grid; gap: 8px; margin-top: 12px; }
-    .job { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 10px 12px; text-align: left; color: var(--ink); background: #f7f9fa; border: 1px solid var(--line); }
-    .job:hover { transform: none; border-color: #91aeb1; }
-    .job small { color: var(--muted); display: block; font-weight: 400; margin-top: 2px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 9px 8px; text-align: left; border-bottom: 1px solid var(--line); }
-    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-    .empty { color: var(--muted); padding: 18px 0; }
-    .toast { position: fixed; right: 20px; bottom: 20px; max-width: 420px; padding: 13px 16px; color: white; background: #26383c; border-radius: 10px; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transform: translateY(10px); transition: .2s; }
-    .toast.show { opacity: 1; transform: translateY(0); }
-    .toast.error { background: var(--bad); }
-    @media (max-width: 1000px) {
-      .metrics { grid-template-columns: repeat(3, 1fr); }
-      .steps { grid-template-columns: repeat(3, 1fr); }
-      .layout { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 650px) {
-      main { width: min(100% - 20px, 1380px); }
-      header { padding: 20px; }
-      .metrics, .steps, .actions { grid-template-columns: 1fr 1fr; }
-      .action.full { grid-column: auto; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="top">
-      <div><h1>BPC Jud</h1><p>Painel local de coleta e acompanhamento</p></div>
-      <div><a href="/admin/processos">Explorar processos →</a> &nbsp; <a href="/docs" target="_blank">Documentação da API ↗</a></div>
-    </div>
-  </header>
-
-  <main>
-    <div class="statusbar"><span id="health-dot" class="dot"></span><span id="health-text">Verificando serviços…</span></div>
-
-    <section class="panel"><div class="toolbar"><div><h2>O que existe em cada processo?</h2><p class="hint">Pesquise o número CNJ, veja assuntos e movimentações do DataJud, textos de atos publicados no Comunica PJe e eventuais extrações de IA. O painel indica quando não há classificação de decisão.</p></div><a class="secondary" href="/admin/processos" style="padding:10px 14px;border-radius:9px;white-space:nowrap;text-decoration:none">Abrir explorador →</a></div></section>
-
-    <section class="metrics" aria-label="Resumo da base">
-      <div class="metric"><span>Processos</span><strong id="m-processos">—</strong></div>
-      <div class="metric"><span>Hits DataJud</span><strong id="m-registros">—</strong></div>
-      <div class="metric"><span>Movimentos</span><strong id="m-movimentos">—</strong></div>
-      <div class="metric"><span>Comunicações</span><strong id="m-comunicacoes">—</strong></div>
-      <div class="metric"><span>Referências TPU</span><strong id="m-tpu">—</strong></div>
-    </section>
-
-    <section class="steps" aria-label="Etapas da pipeline">
-      <div class="step" id="step-infra"><div class="number">PASSO 1</div><h3>Infraestrutura</h3><small>Banco, migrações e API</small></div>
-      <div class="step" id="step-tpu"><div class="number">PASSO 2</div><h3>Tabelas TPU</h3><small>Classes, assuntos e movimentos</small></div>
-      <div class="step" id="step-datajud"><div class="number">PASSO 3</div><h3>DataJud</h3><small>Processos e trajetórias</small></div>
-      <div class="step" id="step-pje"><div class="number">PASSO 4</div><h3>Comunica PJe</h3><small>Atos publicados por processo</small></div>
-      <div class="step" id="step-analysis"><div class="number">PASSO 5</div><h3>Análise</h3><small>Views e cobertura</small></div>
-    </section>
-
-    <div class="layout">
-      <div>
-        <section class="panel">
-          <h2>Executar operações</h2>
-          <div class="actions">
-            <form class="action full" id="datajud-form">
-              <h3>Coletar processos no DataJud</h3>
-              <label>Tribunais</label>
-              <div class="checks" id="tribunais">
-                <label><input type="checkbox" value="TRF1" checked> TRF1</label>
-                <label><input type="checkbox" value="TRF2"> TRF2</label>
-                <label><input type="checkbox" value="TRF3"> TRF3</label>
-                <label><input type="checkbox" value="TRF4"> TRF4</label>
-                <label><input type="checkbox" value="TRF5"> TRF5</label>
-                <label><input type="checkbox" value="TRF6"> TRF6</label>
-                <label><input type="checkbox" value="STJ"> STJ</label>
-              </div>
-              <label>Assuntos CNJ da busca</label>
-              <div class="checks" id="assuntos">
-                <label><input type="checkbox" value="6114" checked> 6114</label>
-                <label><input type="checkbox" value="11946" checked> 11946</label>
-                <label><input type="checkbox" value="11947" checked> 11947</label>
-              </div>
-              <div class="actions" style="margin-top:12px">
-                <div><label for="page-size">Registros por página</label><input id="page-size" type="number" min="10" max="1000" value="50"></div>
-                <div><label for="max-records">Limite por tribunal</label><input id="max-records" type="number" min="1" value="100" placeholder="Vazio = coleta completa"></div>
-              </div>
-              <div class="actions" style="margin-top:12px">
-                <div><label for="source-mode">Campos coletados</label><select id="source-mode"><option value="completo">Todos os campos públicos</option><option value="essencial">Somente campos essenciais</option></select></div>
-                <div><label class="inline-check" style="margin-top:32px"><input id="include-state-courts" type="checkbox"> Incluir 27 TJs (exploratório)</label></div>
-              </div>
-              <label class="inline-check" style="margin-top:12px"><input id="restart" type="checkbox"> Reiniciar o cursor dos tribunais selecionados</label>
-              <label class="inline-check" style="margin-top:12px"><input id="only-df" type="checkbox"> Restringir a órgãos julgadores de Brasília/DF (código DataJud 743)</label>
-              <label class="inline-check" style="margin-top:12px"><input id="first-instance" type="checkbox" checked> Somente 1º grau e Juizados Especiais Federais (G1/JE)</label>
-              <p class="hint">Este filtro cobre o local do órgão julgador, não o município de residência da parte. A RIDE inclui municípios de GO/MG e exige mapeamento próprio.</p>
-              <p class="hint">Para continuar uma coleta interrompida, deixe “reiniciar” desmarcado.</p>
-              <button class="primary operation" type="submit">Iniciar coleta DataJud</button>
-            </form>
-
-            <form class="action" id="pje-form">
-              <h3>Buscar no Comunica PJe</h3>
-              <label for="pje-limit">Processos neste lote</label>
-              <input id="pje-limit" type="number" min="1" max="10000" value="100">
-              <label class="inline-check" style="margin-top:12px"><input id="retry-errors" type="checkbox"> Repetir erros temporários</label>
-              <button class="primary operation" type="submit">Consultar publicações</button>
-            </form>
-
-            <div class="action">
-              <h3>Carregar tabelas TPU</h3>
-              <p class="hint">Importa ou atualiza as tabelas CNJ que já estão no repositório.</p>
-              <button class="secondary operation" id="tpu-button" type="button">Importar referências TPU</button>
-            </div>
-
-            <div class="action">
-              <h3>Descobrir dados oficiais do INSS</h3>
-              <p class="hint">Cataloga planilhas oficiais de benefícios sem fazer o download massivo.</p>
-              <button class="secondary operation" id="inss-button" type="button">Atualizar catálogo INSS</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <h2>Assuntos encontrados junto ao BPC</h2>
-          <p class="hint">Candidatos para ampliar a busca; valide juridicamente antes de incluí-los.</p>
-          <div style="overflow:auto">
-            <table>
-              <thead><tr><th>Código</th><th>Assunto</th><th>Hits</th></tr></thead>
-              <tbody id="related-table"><tr><td colspan="3" class="empty">Ainda não analisado.</td></tr></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="toolbar"><h2>Resultados por tribunal</h2><button class="secondary" id="refresh" type="button">Atualizar</button></div>
-          <div style="overflow:auto">
-            <table>
-              <thead><tr><th>Tribunal</th><th>Processos</th><th>Hits</th><th>Movimentos</th><th>Comunicações</th></tr></thead>
-              <tbody id="tribunal-table"><tr><td colspan="5" class="empty">Nenhum dado coletado.</td></tr></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <div>
-        <section class="panel">
-          <div class="toolbar"><h2>Execução atual</h2><span class="badge" id="task-status">sem tarefa</span></div>
-          <p class="hint" id="task-meta">Inicie uma operação ou selecione uma tarefa no histórico.</p>
-          <pre id="task-log">Os passos e mensagens da próxima operação aparecerão aqui.</pre>
-        </section>
-
-        <section class="panel">
-          <h2>Histórico de tarefas</h2>
-          <div class="history" id="history"><div class="empty">Nenhuma tarefa registrada.</div></div>
-        </section>
-      </div>
-    </div>
-  </main>
-  <div class="toast" id="toast"></div>
-
-  <script>
-    let selectedTask = null;
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Operações · BPC Jud</title><style data-panel-design>:root {
+  color-scheme: light;
+  --ink: #202127;
+  --muted: #62656f;
+  --line: #e4e4e8;
+  --paper: #ffffff;
+  --canvas: #fafafb;
+  --sidebar: #f3f3f5;
+  --hover: #eeeef1;
+  --accent: #4059ad;
+  --accent-soft: #edf0fb;
+  --ok: #34614a;
+  --warn: #78551e;
+  --bad: #a33434;
+  font: 14px/1.55 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+a { color: var(--accent); text-underline-offset: 3px; }
+button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button, .button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+button:hover:not(:disabled), .button:hover { background: var(--hover); }
+.primary, button[type=submit]:not(.secondary) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.primary:hover:not(:disabled), button[type=submit]:hover { background: #393b44; }
+.secondary { background: var(--paper); color: var(--ink); }
+input:not([type=checkbox]), select { min-height: 36px; width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid #c9cbd2; border-radius: 5px; background: var(--paper); color: var(--ink); }
+input::placeholder { color: #767984; }
+input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); flex: 0 0 auto; }
+label { color: var(--muted); font-size: 12px; font-weight: 500; display: grid; gap: 6px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1, h2, h3, h4 { text-wrap: balance; }
+h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.025em; font-weight: 650; }
+h2 { font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+h3 { font-size: 14px; font-weight: 650; }
+h4 { font-size: 13px; font-weight: 650; }
+p { text-wrap: pretty; }
+.muted, .hint, .message, small { color: var(--muted); }
+.hint { font-size: 12px; line-height: 1.6; }
+.error { color: var(--bad); }
+.skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; z-index: 30; background: var(--paper); }
+.skip-link:focus { top: 12px; }
+.app-sidebar { width: 216px; position: fixed; inset: 0 auto 0 0; z-index: 20; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 22px 12px 16px; }
+.app-brand { display: flex; gap: 10px; align-items: center; padding: 0 10px 28px; color: var(--ink); font-size: 15px; font-weight: 650; text-decoration: none; }
+.app-mark { width: 28px; height: 28px; background: var(--ink); border-radius: 6px; display: grid; place-items: center; color: white; font-size: 13px; }
+.app-brand small { display: block; font-weight: 400; font-size: 11px; }
+.nav-label { color: var(--muted); font-size: 11px; padding: 12px 12px 8px; }
+.app-nav { display: grid; gap: 4px; }
+.app-nav a { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 12px; border-radius: 5px; color: #575a65; text-decoration: none; font-size: 13px; }
+.app-nav a:hover { background: var(--hover); }
+.app-nav a[aria-current=page] { color: var(--ink); background: #e5e5ea; font-weight: 600; }
+.app-nav svg { width: 16px; height: 16px; flex: 0 0 16px; stroke-width: 1.6; }
+.sidebar-note { margin-top: auto; padding: 16px 12px 0; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+.sidebar-note a { display: block; margin-bottom: 14px; color: var(--muted); }
+.workspace { margin-left: 216px; min-width: 0; }
+.topbar { height: 54px; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--paper); font-size: 12px; color: var(--muted); }
+.breadcrumbs { display: flex; align-items: center; gap: 12px; }
+.breadcrumbs strong { font-weight: 500; color: var(--ink); }
+.topbar .local-label { font-size: 11px; }
+.mobile-nav-toggle { display: none; }
+main.page { padding: 28px 32px 48px; max-width: 1800px; margin: auto; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 24px; }
+.page-heading p { margin-top: 6px; color: var(--muted); font-size: 13px; max-width: 76ch; }
+.heading-actions { display: flex; align-items: center; gap: 8px; }
+.statusbar { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dot { height: 6px; width: 6px; background: #92959e; border-radius: 50%; }
+.dot.online { background: var(--ok); }
+.dot.offline { background: var(--bad); }
+.summary-strip, .stats, .metrics { display: flex; flex-wrap: wrap; border-block: 1px solid var(--line); padding: 16px 0; gap: 12px 32px; margin-bottom: 24px; }
+.metric, .stat { min-width: 110px; }
+.metric span, .stat small { display: block; font-size: 11px; color: var(--muted); }
+.metric strong, .stat strong { font-size: 19px; line-height: 1.7; font-weight: 600; font-variant-numeric: tabular-nums; }
+.research-note { font-size: 12px; color: var(--muted); margin-bottom: 20px; max-width: 100ch; }
+.panel, .surface { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.panel-head, .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.panel-head { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.panel-body { padding: 20px; }
+.section-heading { margin: 28px 0 12px; }
+.operations-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 24px; align-items: start; }
+.operations-grid > *, .operations-stack { min-width: 0; }
+.operations-stack { display: grid; gap: 20px; }
+.form-section { padding: 20px; display: grid; gap: 16px; border-bottom: 1px solid var(--line); }
+.form-section:last-child { border-bottom: 0; }
+.form-section h3 { margin-bottom: 4px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.checks label, .inline-check { display: flex; align-items: center; gap: 7px; min-height: 30px; color: var(--ink); font-size: 12px; font-weight: 400; }
+.form-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: var(--canvas); border-radius: 0 0 6px 6px; }
+.utility-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; border-top: 1px solid var(--line); }
+.utility-row p { margin-top: 3px; }
+.steps { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11px; color: var(--muted); padding: 12px 0 24px; }
+.step { display: flex; align-items: center; gap: 7px; }
+.step::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #b4b6be; }
+.step.done::before { background: var(--ok); }
+.badge, .pill { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 4px; background: var(--hover); color: #50535e; font-size: 11px; font-weight: 500; }
+.badge.executando, .badge.na_fila { background: var(--accent-soft); color: var(--accent); }
+.badge.concluida { background: #edf4ef; color: var(--ok); }
+.badge.falhou, .badge.interrompida { background: #fbefef; color: var(--bad); }
+.log { margin: 0; border: 0; border-radius: 0 0 6px 6px; background: #222329; color: #e3e4e9; padding: 20px; min-height: 220px; max-height: 440px; font: 12px/1.7 Consolas, monospace; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; }
+.history { display: grid; }
+.job { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 20px; width: 100%; justify-content: space-between; text-align: left; background: var(--paper); }
+.job small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
+.job strong { font-size: 12px; font-weight: 550; }
+.empty { color: var(--muted); padding: 20px; font-size: 13px; }
+.table-wrap { overflow: auto; max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--canvas); white-space: nowrap; }
+td { font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--canvas); }
+.toast { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: min(420px, calc(100vw - 32px)); padding: 12px 16px; color: var(--paper); background: var(--ink); border-radius: 6px; opacity: 0; pointer-events: none; }
+.toast.show { opacity: 1; }
+.toast.error { background: var(--bad); }
+.filterbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.filterbar label { flex: 1 1 120px; }
+.filterbar .search-field { flex: 2 1 240px; }
+.explorer { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
+.list-panel { border-right: 1px solid var(--line); min-width: 0; }
+.list-heading { padding: 16px; border-bottom: 1px solid var(--line); }
+.list-heading h2 { font-size: 13px; }
+.message { font-size: 12px; }
+.list-heading .message { margin-top: 4px; }
+.process-list { display: grid; max-height: 680px; overflow: auto; }
+.process-row { display: block; width: 100%; text-align: left; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-weight: 400; }
+.process-row strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.process-row small { display: block; font-size: 11px; margin-top: 5px; line-height: 1.6; }
+.process-row.selected, .process-row.selected:hover { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.pager button { font-size: 11px; min-height: 32px; padding: 5px 8px; }
+.dossier { min-width: 0; padding: 24px 28px 40px; }
+.dossier > .message { margin-bottom: 16px; }
+.detail-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.detail-head h2 { font-size: clamp(17px, 1.7vw, 23px); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.section-nav { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 20px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.section-nav a { color: var(--muted); text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; font-size: 11px; }
+.section-nav a:hover { color: var(--ink); }
+.notice { padding: 12px 14px; background: #faf7ef; border: 1px solid #eee5d4; border-radius: 4px; font-size: 12px; color: var(--warn); margin: 16px 0; }
+.section { padding-top: 24px; margin-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 20px; }
+.section > h3 { font-size: 16px; margin-bottom: 12px; }
+.section > p { margin-bottom: 16px; }
+.entry { padding: 20px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.entry:last-child { border-bottom: 0; }
+.entry h4 { margin-bottom: 10px; }
+.entry p { margin: 8px 0; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; margin: 16px 0; }
+.facts > div { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.facts small { display: block; font-size: 11px; margin-bottom: 4px; }
+.text, .corpus-body pre { font: 14px/1.85 'Segoe UI', system-ui, sans-serif; max-width: 82ch; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); background: var(--paper); padding: 16px 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 480px; font: 11px/1.7 Consolas, monospace; color: #51545f; background: var(--canvas); padding: 16px; border-radius: 4px; }
+details summary { min-height: 36px; padding: 8px 0; cursor: pointer; font-weight: 500; font-size: 12px; color: var(--muted); }
+.document-body { margin: 12px 0; border-block: 1px solid var(--line); }
+.events { max-height: 460px; overflow: auto; }
+.event { position: relative; padding: 12px 0 12px 20px; border-left: 1px solid var(--line); margin-left: 4px; font-size: 13px; }
+.event::before { content: ''; position: absolute; left: -3px; top: 20px; width: 5px; height: 5px; border-radius: 50%; background: #a8abb5; }
+.event small { font-size: 11px; }
+.review-state { padding: 12px 14px; background: var(--canvas); border-radius: 4px; font-size: 12px; }
+.evidence { padding: 16px; background: var(--canvas); border-radius: 4px; margin: 12px 0; font-size: 12px; overflow-wrap: anywhere; }
+.evidence blockquote { margin: 12px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.8; }
+.gaps { padding-left: 18px; color: var(--muted); font-size: 13px; }
+.gaps li { margin: 8px 0; }
+.back-to-list { display: none; }
+.corpus-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 24px; align-items: start; }
+.corpus-list article { border-bottom: 1px solid var(--line); padding: 20px; overflow-wrap: anywhere; }
+.corpus-list article:last-child { border-bottom: 0; }
+.corpus-list h2 { font-size: 14px; margin-bottom: 8px; }
+.document-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 16px; align-items: start; }
+.document-row > div { min-width: 0; font-size: 12px; }
+.corpus-list small { font-size: 11px; display: block; }
+.corpus-list p { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.corpus-list a { font-size: 12px; }
+.context-note { padding: 16px; font-size: 12px; color: var(--muted); }
+.context-note h3 { color: var(--ink); margin-bottom: 8px; }
+.context-note p + p { margin-top: 12px; }
+.context-data { margin-top: 24px; }
+.context-data > summary { font-size: 13px; color: var(--ink); border-bottom: 1px solid var(--line); }
+[aria-busy=true] { cursor: progress; }
+@media (max-width: 1199px) {
+  .app-sidebar { width: 190px; }
+  .workspace { margin-left: 190px; }
+  main.page { padding: 24px; }
+  .topbar { padding-inline: 24px; }
+  .operations-grid { grid-template-columns: 1fr; }
+  .explorer { grid-template-columns: 270px minmax(0, 1fr); }
+  .dossier { padding: 20px; }
+  .corpus-layout { grid-template-columns: 1fr; }
+  .corpus-context { display: none; }
+}
+@media (max-width: 900px) {
+  .app-sidebar { position: static; width: auto; padding: 12px 20px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .app-brand { padding: 0; }
+  .app-brand small, .nav-label, .sidebar-note { display: none; }
+  .app-sidebar-top { display: flex; align-items: center; justify-content: space-between; }
+  .mobile-nav-toggle { display: inline-flex; min-height: 36px; font-size: 12px; }
+  .app-nav { display: flex; gap: 4px; margin-top: 12px; }
+  .app-nav a { flex: 1; justify-content: center; min-height: 40px; padding: 8px; }
+  .app-sidebar[data-collapsed=true] .app-nav { display: none; }
+  .workspace { margin-left: 0; }
+  .topbar { height: 42px; }
+  .explorer { grid-template-columns: 1fr; }
+  .list-panel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .process-list { max-height: 370px; }
+  .back-to-list { display: inline-flex; min-height: 44px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+  .page-heading { align-items: start; }
+  .heading-actions { flex-wrap: wrap; justify-content: end; }
+}
+@media (max-width: 600px) {
+  :root { font-size: 14px; }
+  .app-sidebar { padding: 12px 16px; }
+  .app-nav a { font-size: 12px; gap: 6px; }
+  main.page { padding: 20px 16px 36px; }
+  .topbar { padding-inline: 16px; }
+  .local-label { display: none; }
+  h1 { font-size: 22px; }
+  .page-heading { flex-direction: column; gap: 16px; margin-bottom: 20px; }
+  .summary-strip, .stats, .metrics { gap: 12px 24px; }
+  .stat, .metric { min-width: 90px; }
+  .metric strong, .stat strong { font-size: 17px; }
+  .form-grid, .facts { grid-template-columns: 1fr; }
+  .panel-head, .panel-body, .form-section, .utility-row { padding: 16px; }
+  .utility-row, .form-footer { flex-direction: column; align-items: stretch; }
+  .form-footer { padding: 16px; }
+  button, .button, input:not([type=checkbox]), select { min-height: 44px; }
+  .checks label, .inline-check { min-height: 36px; }
+  .filterbar { padding: 16px; gap: 12px; }
+  .filterbar label { flex-basis: 130px; }
+  .filterbar .search-field { flex-basis: 100%; }
+  .filterbar button { width: 100%; }
+  .dossier { padding: 16px; }
+  .section-nav { gap: 0 16px; }
+  .section-nav a { min-height: 44px; }
+  .corpus-list article { padding: 16px; }
+  .document-row { grid-template-columns: 1fr; gap: 8px; }
+}
+</style></head>
+<body data-screen="operations">
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+<aside class="app-sidebar" aria-label="Navegação do painel">
+  <div class="app-sidebar-top"><a class="app-brand" href="/"><span class="app-mark" aria-hidden="true">B</span><span>BPC Jud<small>Pesquisa judicial</small></span></a><button class="mobile-nav-toggle" id="nav-toggle" type="button" aria-expanded="true" aria-controls="app-nav">Menu</button></div>
+  <div class="nav-label">Área de trabalho</div>
+  <nav class="app-nav" id="app-nav" aria-label="Principal"><a href="/admin/analise"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 2.5v11m0-7h7.5"/></svg><span>Análise de casos</span></a><a href="/admin/coleta" aria-current="page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/><path d="M5 2v4m6 0v4m-4 0v4"/></svg><span>Coletas</span></a><a href="/admin/documentos"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 2.5h6l3 3v8H4z"/><path d="M10 2.5v3h3M6 8h5M6 10.5h4"/></svg><span>Corpus documental</span></a></nav>
+  <div class="sidebar-note"><a href="/docs" target="_blank" rel="noopener noreferrer">Documentação da API ↗</a>Resultados automáticos exigem revisão humana. Documentos públicos não são autos completos.</div>
+</aside>
+<div class="workspace"><header class="topbar"><div class="breadcrumbs"><span>Pesquisa BPC</span><span aria-hidden="true">/</span><strong>Operações</strong></div><span class="local-label">Ambiente de pesquisa</span></header>
+<main class="page" id="main-content" tabindex="-1">
+<div class="page-heading"><div><h1>Operações de coleta</h1><p>Configure as fontes, acompanhe execuções e confira a cobertura da base.</p></div><div class="heading-actions"><button class="secondary" id="refresh" type="button">Atualizar dados</button></div></div>
+<div class="statusbar" role="status"><span id="health-dot" class="dot" aria-hidden="true"></span><span id="health-text">Verificando serviços…</span></div>
+<div class="steps" aria-label="Disponibilidade da pipeline"><span class="step" id="step-infra">Infraestrutura</span><span class="step" id="step-tpu">Referências TPU</span><span class="step" id="step-datajud">DataJud</span><span class="step" id="step-pje">Comunica PJe</span><span class="step" id="step-analysis">Views analíticas</span></div>
+<section class="metrics" aria-label="Contagens da base"><div class="metric"><span>Processos únicos</span><strong id="m-processos">Não consultado</strong></div><div class="metric"><span>Registros DataJud</span><strong id="m-registros">Não consultado</strong></div><div class="metric"><span>Movimentações</span><strong id="m-movimentos">Não consultado</strong></div><div class="metric"><span>Publicações</span><strong id="m-comunicacoes">Não consultado</strong></div><div class="metric"><span>Referências TPU</span><strong id="m-tpu">Não consultado</strong></div></section>
+<div class="operations-grid"><div class="operations-stack">
+  <section class="panel"><div class="panel-head"><h2>DataJud</h2><span class="badge">Capa e movimentações</span></div>
+  <form id="datajud-form"><div class="form-section"><div><h3>Escopo da consulta</h3><p class="hint">Assuntos indicam candidatos. A inclusão na amostra depende de confirmação documental.</p></div>
+    <div><label>Tribunais</label><div class="checks" id="tribunais"><label><input type="checkbox" value="TRF1" checked>TRF1</label><label><input type="checkbox" value="TRF2">TRF2</label><label><input type="checkbox" value="TRF3">TRF3</label><label><input type="checkbox" value="TRF4">TRF4</label><label><input type="checkbox" value="TRF5">TRF5</label><label><input type="checkbox" value="TRF6">TRF6</label><label><input type="checkbox" value="STJ">STJ</label></div></div>
+    <div><label>Assuntos CNJ</label><div class="checks" id="assuntos"><label><input type="checkbox" value="6114" checked>6114 · Benefício assistencial</label><label><input type="checkbox" value="11946" checked>11946 · Deficiência</label><label><input type="checkbox" value="11947" checked>11947 · Idoso</label></div></div>
+    <label class="inline-check"><input id="only-df" type="checkbox">Órgãos de Brasília/DF (DataJud 743)</label><label class="inline-check"><input id="first-instance" type="checkbox" checked>Primeiro grau e Juizados Especiais Federais (G1/JE)</label>
+    <p class="hint">Local do órgão não é residência. O filtro de Brasília não representa toda a RIDE.</p>
+  </div><div class="form-section"><h3>Limites e continuidade</h3><div class="form-grid"><label for="page-size">Registros por página<input id="page-size" type="number" min="10" max="1000" value="50"></label><label for="max-records">Limite por tribunal<input id="max-records" type="number" min="1" value="100" placeholder="Vazio = sem limite"></label><label for="source-mode">Campos coletados<select id="source-mode"><option value="completo">Todos os campos públicos</option><option value="essencial">Somente essenciais</option></select></label><label class="inline-check"><input id="include-state-courts" type="checkbox">Incluir 27 TJs (exploratório)</label></div><label class="inline-check"><input id="restart" type="checkbox">Reiniciar cursor dos tribunais selecionados</label><p class="hint">Para continuar uma execução interrompida, mantenha o cursor.</p></div>
+  <div class="form-footer"><span class="hint">A coleta será registrada como uma nova tarefa.</span><button class="primary operation" type="submit">Iniciar coleta DataJud</button></div></form></section>
+  <section class="panel"><div class="panel-head"><h2>Outras operações</h2></div><form id="pje-form" class="form-section"><div><h3>Comunica PJe</h3><p class="hint">Publicações por processo. Não consulta o conjunto completo dos autos.</p></div><div class="form-grid"><label for="pje-limit">Processos neste lote<input id="pje-limit" type="number" min="1" max="10000" value="100"></label><label class="inline-check"><input id="retry-errors" type="checkbox">Repetir erros temporários</label></div><div><button class="secondary operation" type="submit">Consultar publicações</button></div></form><div class="utility-row"><div><h3>Referências TPU</h3><p class="hint">Tabelas CNJ já disponíveis no repositório.</p></div><button class="secondary operation" id="tpu-button" type="button">Importar TPU</button></div><div class="utility-row"><div><h3>Catálogo INSS</h3><p class="hint">Descobrir recursos oficiais, sem download massivo.</p></div><button class="secondary operation" id="inss-button" type="button">Atualizar catálogo</button></div></section>
+</div><div class="operations-stack">
+  <section class="panel"><div class="panel-head"><h2>Monitor de execução</h2><span class="badge" id="task-status">Sem tarefa</span></div><div class="panel-body"><p class="hint" id="task-meta">Selecione uma tarefa no histórico ou inicie uma operação.</p></div><pre class="log" id="task-log" tabindex="0" aria-label="Log de execução">Nenhuma execução selecionada.</pre></section>
+  <section class="panel"><div class="panel-head"><h2>Histórico de tarefas</h2></div><div class="history" id="history"><div class="empty">Carregando histórico…</div></div></section>
+  <section class="panel"><div class="panel-head"><h2>Assuntos relacionados</h2></div><div class="panel-body"><p class="hint">Coocorrências no DataJud. Não confirmam pertinência ao recorte.</p></div><div class="table-wrap" tabindex="0" aria-label="Assuntos relacionados"><table><thead><tr><th>Código</th><th>Assunto</th><th>Registros</th></tr></thead><tbody id="related-table"><tr><td colspan="3" class="empty">Carregando…</td></tr></tbody></table></div></section>
+</div></div>
+<section class="panel section-heading"><div class="panel-head"><h2>Cobertura por tribunal</h2><span class="hint">Contagens do banco selecionado</span></div><div class="table-wrap" tabindex="0" aria-label="Cobertura por tribunal"><table><thead><tr><th>Tribunal</th><th>Processos</th><th>Registros DataJud</th><th>Movimentos</th><th>Publicações</th></tr></thead><tbody id="tribunal-table"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody></table></div></section><div class="toast" id="toast" role="status" aria-live="polite"></div></main></div>
+<script data-panel-shell>(() => { const toggle = document.getElementById('nav-toggle'); toggle.addEventListener('click', () => { const collapsed = toggle.getAttribute('aria-expanded') === 'true'; toggle.setAttribute('aria-expanded', String(!collapsed)); document.querySelector('.app-sidebar').dataset.collapsed = String(collapsed); }); })();</script>
+<script>let selectedTask = null;
     let pollHandle = null;
     const $ = (id) => document.getElementById(id);
     const number = (value) => new Intl.NumberFormat('pt-BR').format(value || 0);
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character]));
 
     async function request(url, options = {}) {
       const response = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...options});
@@ -276,11 +315,11 @@
         markStep('step-analysis', t.registros_datajud > 0);
         const tbody = $('tribunal-table');
         tbody.innerHTML = data.tribunais.length ? data.tribunais.map(row => `
-          <tr><td>${row.tribunal || '—'}</td><td>${number(row.processos)}</td><td>${number(row.registros_datajud)}</td><td>${number(row.movimentos)}</td><td>${number(row.comunicacoes_pje)}</td></tr>
+          <tr><td>${escapeHtml(row.tribunal || 'Não informado')}</td><td>${number(row.processos)}</td><td>${number(row.registros_datajud)}</td><td>${number(row.movimentos)}</td><td>${number(row.comunicacoes_pje)}</td></tr>
         `).join('') : '<tr><td colspan="5" class="empty">Nenhum dado coletado.</td></tr>';
         const related = await request('/analises/assuntos-relacionados?limit=15');
         $('related-table').innerHTML = related.length ? related.map(row => `
-          <tr><td>${row.codigo}</td><td>${row.nome || '—'}</td><td>${number(row.registros)}</td></tr>
+          <tr><td>${escapeHtml(row.codigo)}</td><td>${escapeHtml(row.nome || 'Não informado')}</td><td>${number(row.registros)}</td></tr>
         `).join('') : '<tr><td colspan="3" class="empty">Nenhum assunto adicional encontrado.</td></tr>';
       } catch (error) {
         $('health-dot').className = 'dot offline';
@@ -291,13 +330,14 @@
     function setBusy(busy) { document.querySelectorAll('.operation').forEach(button => button.disabled = busy); }
 
     async function startTask(endpoint, payload) {
+      setBusy(true);
       try {
         const task = await request(endpoint, {method: 'POST', body: payload === undefined ? undefined : JSON.stringify(payload)});
         selectedTask = task.id;
         toast('Tarefa iniciada. Acompanhe os passos no log.');
         await refreshTask();
         await refreshHistory();
-      } catch (error) { toast(error.message, true); }
+      } catch (error) { toast(error.message, true); await refreshHistory(); }
     }
 
     async function refreshTask() {
@@ -330,9 +370,9 @@
         const tasks = await request('/tarefas?limit=12');
         const history = $('history');
         history.innerHTML = tasks.length ? tasks.map(task => `
-          <button class="job" type="button" data-id="${task.id}">
-            <span><strong>${task.tipo}</strong><small>${new Date(task.criado_em).toLocaleString('pt-BR')}</small></span>
-            <span class="badge ${task.status}">${task.status.replace('_', ' ')}</span>
+          <button class="job" type="button" data-id="${escapeHtml(task.id)}">
+            <span><strong>${escapeHtml(task.tipo)}</strong><small>${new Date(task.criado_em).toLocaleString('pt-BR')}</small></span>
+            <span class="badge ${escapeHtml(task.status)}">${escapeHtml(task.status.replace('_', ' '))}</span>
           </button>`).join('') : '<div class="empty">Nenhuma tarefa registrada.</div>';
         history.querySelectorAll('.job').forEach(button => button.addEventListener('click', async () => {
           selectedTask = button.dataset.id;
@@ -379,6 +419,5 @@
       setInterval(refreshSummary, 10000);
     }
     boot();
-  </script>
-</body>
-</html>
+</script>
+</body></html>

@@ -1,59 +1,311 @@
-<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Documentos públicos complementares — BPC</title>
-<style>body{font:16px system-ui;background:#f5f7fb;color:#18263a;max-width:1050px;margin:30px auto;padding:20px}article{background:white;border:1px solid #d8dfeb;border-radius:8px;padding:20px;margin:20px 0}pre{white-space:pre-wrap;font:inherit;line-height:1.6}input,select,button{font:inherit;padding:8px;margin:4px}small{color:#52657a}a{color:#155ab0}</style>
-<a href="/admin/processos">← Processos da amostra</a><h1>Documentos públicos complementares</h1>
-<p>Este corpus não é a amostra de concessões iniciais DF/RIDE. Um documento pode pertencer a outra região ou instância. Textos locais podem conter dados pessoais; não publique exportações brutas.</p>
-<form id="filter"><select id="source"><option value="">Todas as fontes</option><option value="pje_trf1">PJe — TRF1 consulta pública</option><option value="stj">STJ</option><option value="cjf_trf1">CJF — TRF1/JEF1</option><option value="trf1_arquivo">Arquivo TRF1</option><option value="tnu">TNU</option><option value="trf2_jurisprudencia">TRF2 — jurisprudência</option><option value="trf3_jurisprudencia">TRF3 — publicados</option><option value="trf4_jurisprudencia">TRF4 — jurisprudência</option><option value="trf5_jurisprudencia">TRF5 — jurisprudência</option><option value="trf6_jurisprudencia">TRF6 — jurisprudência</option></select><input id="query" placeholder="Texto ou número do processo"><button>Pesquisar</button></form>
-<p id="status" role="status"></p><main id="results"></main><button id="prev">Anterior</button><button id="next">Próxima</button>
-<section><h2>Indeferimentos administrativos do INSS — DF</h2><p>Contexto administrativo, sem ligação automática com processos. Mostra o último snapshot de cada competência.</p><div id="inss"></div></section>
-<section><h2>Concessões administrativas do INSS — DF</h2><p>Benefícios concedidos por espécie e despacho publicado. Não são pessoas únicas nem taxa de procedência judicial. Mostra o último snapshot de cada competência.</p><div id="grants"></div></section>
-<script>
-let offset=0, total=0;
-const el=id=>document.getElementById(id);
-function add(parent,tag,text){const node=document.createElement(tag);node.textContent=text;parent.append(node);return node;}
-async function load(){
-  el('status').textContent='Carregando…';
-  try{
-    const params=new URLSearchParams({limit:20,offset});
-    if(el('source').value)params.set('fonte',el('source').value);
-    if(el('query').value)params.set('texto',el('query').value);
-    const response=await fetch('/admin/api/documentos?'+params);
-    if(!response.ok)throw new Error('Falha HTTP '+response.status);
-    const data=await response.json(); total=data.total; el('results').replaceChildren();
-    el('status').textContent=data.schema_disponivel?`${total} versões de documentos. Origem preservada; conteúdo ainda não validado por revisão humana.`:'Execute uma coleta para criar as tabelas complementares.';
-    for(const item of data.itens){
-      const card=add(el('results'),'article','');
-      add(card,'h2',`${item.tribunal||item.fonte} · ${item.tipo_documento||'Documento'} · ${item.numero_origem||item.documento_id}`);
-      add(card,'small',`${item.fonte} · publicado em ${item.data_publicacao||'data não informada'} · CNJ explícito: ${item.numeros_cnj.join(', ')||'não informado; sem vínculo automático'}`);
-      if(item.revisao_privacidade==='pendente')add(card,'p','Conteúdo e link retidos até revisão de privacidade/ética; documento armazenado apenas localmente e não enviado à IA.');
-      if(item.extracao_texto==='pendente')add(card,'p','Arquivo original baixado. Texto pendente de conversão DOC ou OCR TIFF; ainda não analisável pela IA.');
-      if(item.extracao_texto==='texto_simples')add(card,'p','Texto simples publicado pela fonte, sem OCR. Ainda depende de revisão humana.');
-      if(item.extracao_texto==='doc_legacy_preliminar')add(card,'p','Texto extraído localmente de DOC antigo. Conversão preliminar, sem garantia de integridade; revisão humana necessária.');
-      for(const [label,text] of [['Ementa',item.ementa],['Decisão publicada',item.decisao],['Texto publicado',item.texto]]){
-        if(text){const details=add(card,'details','');add(details,'summary',label);add(details,'pre',text);}
-      }
-      if(item.url_origem){const url=new URL(item.url_origem);
-        if(url.protocol==='https:'){const link=add(card,'a','Abrir fonte oficial');link.href=url;link.target='_blank';link.rel='noopener noreferrer';}}
-    }
-    el('prev').disabled=offset===0; el('next').disabled=offset+20>=total;
-  }catch(error){el('status').textContent=error.message;}
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Corpus documental · BPC Jud</title><style data-panel-design>:root {
+  color-scheme: light;
+  --ink: #202127;
+  --muted: #62656f;
+  --line: #e4e4e8;
+  --paper: #ffffff;
+  --canvas: #fafafb;
+  --sidebar: #f3f3f5;
+  --hover: #eeeef1;
+  --accent: #4059ad;
+  --accent-soft: #edf0fb;
+  --ok: #34614a;
+  --warn: #78551e;
+  --bad: #a33434;
+  font: 14px/1.55 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  font-synthesis: none;
 }
-el('filter').addEventListener('submit',event=>{event.preventDefault();offset=0;load();});el('prev').onclick=()=>{offset=Math.max(0,offset-20);load();};el('next').onclick=()=>{offset+=20;load();};load();
-async function loadInss(){try{const response=await fetch('/admin/api/indeferimentos-inss?uf=DF');if(!response.ok)throw new Error('Falha ao carregar INSS');const data=await response.json();if(!data.itens.length){add(el('inss'),'p','Nenhum agregado INSS coletado.');return;}const table=add(el('inss'),'table','');const heading=add(table,'tr','');for(const title of ['Competência','Espécie','Motivo publicado','Indeferimentos'])add(heading,'th',title);for(const item of data.itens){const row=add(table,'tr','');for(const value of [item.competencia,item.especie===87?'BPC — deficiência':'BPC — idoso',item.motivo,item.quantidade])add(row,'td',String(value));}}catch(error){add(el('inss'),'p',error.message);}}loadInss();
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+a { color: var(--accent); text-underline-offset: 3px; }
+button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button, .button { min-height: 36px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+button:hover:not(:disabled), .button:hover { background: var(--hover); }
+.primary, button[type=submit]:not(.secondary) { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.primary:hover:not(:disabled), button[type=submit]:hover { background: #393b44; }
+.secondary { background: var(--paper); color: var(--ink); }
+input:not([type=checkbox]), select { min-height: 36px; width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid #c9cbd2; border-radius: 5px; background: var(--paper); color: var(--ink); }
+input::placeholder { color: #767984; }
+input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); flex: 0 0 auto; }
+label { color: var(--muted); font-size: 12px; font-weight: 500; display: grid; gap: 6px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1, h2, h3, h4 { text-wrap: balance; }
+h1 { font-size: 25px; line-height: 1.25; letter-spacing: -.025em; font-weight: 650; }
+h2 { font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+h3 { font-size: 14px; font-weight: 650; }
+h4 { font-size: 13px; font-weight: 650; }
+p { text-wrap: pretty; }
+.muted, .hint, .message, small { color: var(--muted); }
+.hint { font-size: 12px; line-height: 1.6; }
+.error { color: var(--bad); }
+.skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; z-index: 30; background: var(--paper); }
+.skip-link:focus { top: 12px; }
+.app-sidebar { width: 216px; position: fixed; inset: 0 auto 0 0; z-index: 20; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 22px 12px 16px; }
+.app-brand { display: flex; gap: 10px; align-items: center; padding: 0 10px 28px; color: var(--ink); font-size: 15px; font-weight: 650; text-decoration: none; }
+.app-mark { width: 28px; height: 28px; background: var(--ink); border-radius: 6px; display: grid; place-items: center; color: white; font-size: 13px; }
+.app-brand small { display: block; font-weight: 400; font-size: 11px; }
+.nav-label { color: var(--muted); font-size: 11px; padding: 12px 12px 8px; }
+.app-nav { display: grid; gap: 4px; }
+.app-nav a { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 8px 12px; border-radius: 5px; color: #575a65; text-decoration: none; font-size: 13px; }
+.app-nav a:hover { background: var(--hover); }
+.app-nav a[aria-current=page] { color: var(--ink); background: #e5e5ea; font-weight: 600; }
+.app-nav svg { width: 16px; height: 16px; flex: 0 0 16px; stroke-width: 1.6; }
+.sidebar-note { margin-top: auto; padding: 16px 12px 0; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+.sidebar-note a { display: block; margin-bottom: 14px; color: var(--muted); }
+.workspace { margin-left: 216px; min-width: 0; }
+.topbar { height: 54px; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--paper); font-size: 12px; color: var(--muted); }
+.breadcrumbs { display: flex; align-items: center; gap: 12px; }
+.breadcrumbs strong { font-weight: 500; color: var(--ink); }
+.topbar .local-label { font-size: 11px; }
+.mobile-nav-toggle { display: none; }
+main.page { padding: 28px 32px 48px; max-width: 1800px; margin: auto; }
+.page-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 24px; }
+.page-heading p { margin-top: 6px; color: var(--muted); font-size: 13px; max-width: 76ch; }
+.heading-actions { display: flex; align-items: center; gap: 8px; }
+.statusbar { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dot { height: 6px; width: 6px; background: #92959e; border-radius: 50%; }
+.dot.online { background: var(--ok); }
+.dot.offline { background: var(--bad); }
+.summary-strip, .stats, .metrics { display: flex; flex-wrap: wrap; border-block: 1px solid var(--line); padding: 16px 0; gap: 12px 32px; margin-bottom: 24px; }
+.metric, .stat { min-width: 110px; }
+.metric span, .stat small { display: block; font-size: 11px; color: var(--muted); }
+.metric strong, .stat strong { font-size: 19px; line-height: 1.7; font-weight: 600; font-variant-numeric: tabular-nums; }
+.research-note { font-size: 12px; color: var(--muted); margin-bottom: 20px; max-width: 100ch; }
+.panel, .surface { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.panel-head, .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.panel-head { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.panel-body { padding: 20px; }
+.section-heading { margin: 28px 0 12px; }
+.operations-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr); gap: 24px; align-items: start; }
+.operations-grid > *, .operations-stack { min-width: 0; }
+.operations-stack { display: grid; gap: 20px; }
+.form-section { padding: 20px; display: grid; gap: 16px; border-bottom: 1px solid var(--line); }
+.form-section:last-child { border-bottom: 0; }
+.form-section h3 { margin-bottom: 4px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.checks label, .inline-check { display: flex; align-items: center; gap: 7px; min-height: 30px; color: var(--ink); font-size: 12px; font-weight: 400; }
+.form-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: var(--canvas); border-radius: 0 0 6px 6px; }
+.utility-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 20px; border-top: 1px solid var(--line); }
+.utility-row p { margin-top: 3px; }
+.steps { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11px; color: var(--muted); padding: 12px 0 24px; }
+.step { display: flex; align-items: center; gap: 7px; }
+.step::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #b4b6be; }
+.step.done::before { background: var(--ok); }
+.badge, .pill { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 4px; background: var(--hover); color: #50535e; font-size: 11px; font-weight: 500; }
+.badge.executando, .badge.na_fila { background: var(--accent-soft); color: var(--accent); }
+.badge.concluida { background: #edf4ef; color: var(--ok); }
+.badge.falhou, .badge.interrompida { background: #fbefef; color: var(--bad); }
+.log { margin: 0; border: 0; border-radius: 0 0 6px 6px; background: #222329; color: #e3e4e9; padding: 20px; min-height: 220px; max-height: 440px; font: 12px/1.7 Consolas, monospace; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; }
+.history { display: grid; }
+.job { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 20px; width: 100%; justify-content: space-between; text-align: left; background: var(--paper); }
+.job small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
+.job strong { font-size: 12px; font-weight: 550; }
+.empty { color: var(--muted); padding: 20px; font-size: 13px; }
+.table-wrap { overflow: auto; max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 11px; font-weight: 500; color: var(--muted); background: var(--canvas); white-space: nowrap; }
+td { font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--canvas); }
+.toast { position: fixed; right: 24px; bottom: 24px; z-index: 40; max-width: min(420px, calc(100vw - 32px)); padding: 12px 16px; color: var(--paper); background: var(--ink); border-radius: 6px; opacity: 0; pointer-events: none; }
+.toast.show { opacity: 1; }
+.toast.error { background: var(--bad); }
+.filterbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.filterbar label { flex: 1 1 120px; }
+.filterbar .search-field { flex: 2 1 240px; }
+.explorer { display: grid; grid-template-columns: 310px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
+.list-panel { border-right: 1px solid var(--line); min-width: 0; }
+.list-heading { padding: 16px; border-bottom: 1px solid var(--line); }
+.list-heading h2 { font-size: 13px; }
+.message { font-size: 12px; }
+.list-heading .message { margin-top: 4px; }
+.process-list { display: grid; max-height: 680px; overflow: auto; }
+.process-row { display: block; width: 100%; text-align: left; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-weight: 400; }
+.process-row strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.process-row small { display: block; font-size: 11px; margin-top: 5px; line-height: 1.6; }
+.process-row.selected, .process-row.selected:hover { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.pager button { font-size: 11px; min-height: 32px; padding: 5px 8px; }
+.dossier { min-width: 0; padding: 24px 28px 40px; }
+.dossier > .message { margin-bottom: 16px; }
+.detail-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.detail-head h2 { font-size: clamp(17px, 1.7vw, 23px); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.section-nav { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 20px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.section-nav a { color: var(--muted); text-decoration: none; min-height: 32px; display: inline-flex; align-items: center; font-size: 11px; }
+.section-nav a:hover { color: var(--ink); }
+.notice { padding: 12px 14px; background: #faf7ef; border: 1px solid #eee5d4; border-radius: 4px; font-size: 12px; color: var(--warn); margin: 16px 0; }
+.section { padding-top: 24px; margin-top: 28px; border-top: 1px solid var(--line); scroll-margin-top: 20px; }
+.section > h3 { font-size: 16px; margin-bottom: 12px; }
+.section > p { margin-bottom: 16px; }
+.entry { padding: 20px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.entry:last-child { border-bottom: 0; }
+.entry h4 { margin-bottom: 10px; }
+.entry p { margin: 8px 0; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; margin: 16px 0; }
+.facts > div { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.facts small { display: block; font-size: 11px; margin-bottom: 4px; }
+.text, .corpus-body pre { font: 14px/1.85 'Segoe UI', system-ui, sans-serif; max-width: 82ch; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); background: var(--paper); padding: 16px 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 480px; font: 11px/1.7 Consolas, monospace; color: #51545f; background: var(--canvas); padding: 16px; border-radius: 4px; }
+details summary { min-height: 36px; padding: 8px 0; cursor: pointer; font-weight: 500; font-size: 12px; color: var(--muted); }
+.document-body { margin: 12px 0; border-block: 1px solid var(--line); }
+.events { max-height: 460px; overflow: auto; }
+.event { position: relative; padding: 12px 0 12px 20px; border-left: 1px solid var(--line); margin-left: 4px; font-size: 13px; }
+.event::before { content: ''; position: absolute; left: -3px; top: 20px; width: 5px; height: 5px; border-radius: 50%; background: #a8abb5; }
+.event small { font-size: 11px; }
+.review-state { padding: 12px 14px; background: var(--canvas); border-radius: 4px; font-size: 12px; }
+.evidence { padding: 16px; background: var(--canvas); border-radius: 4px; margin: 12px 0; font-size: 12px; overflow-wrap: anywhere; }
+.evidence blockquote { margin: 12px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.8; }
+.gaps { padding-left: 18px; color: var(--muted); font-size: 13px; }
+.gaps li { margin: 8px 0; }
+.back-to-list { display: none; }
+.corpus-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 24px; align-items: start; }
+.corpus-list article { border-bottom: 1px solid var(--line); padding: 20px; overflow-wrap: anywhere; }
+.corpus-list article:last-child { border-bottom: 0; }
+.corpus-list h2 { font-size: 14px; margin-bottom: 8px; }
+.document-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px auto; gap: 16px; align-items: start; }
+.document-row > div { min-width: 0; font-size: 12px; }
+.corpus-list small { font-size: 11px; display: block; }
+.corpus-list p { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.corpus-list a { font-size: 12px; }
+.context-note { padding: 16px; font-size: 12px; color: var(--muted); }
+.context-note h3 { color: var(--ink); margin-bottom: 8px; }
+.context-note p + p { margin-top: 12px; }
+.context-data { margin-top: 24px; }
+.context-data > summary { font-size: 13px; color: var(--ink); border-bottom: 1px solid var(--line); }
+[aria-busy=true] { cursor: progress; }
+@media (max-width: 1199px) {
+  .app-sidebar { width: 190px; }
+  .workspace { margin-left: 190px; }
+  main.page { padding: 24px; }
+  .topbar { padding-inline: 24px; }
+  .operations-grid { grid-template-columns: 1fr; }
+  .explorer { grid-template-columns: 270px minmax(0, 1fr); }
+  .dossier { padding: 20px; }
+  .corpus-layout { grid-template-columns: 1fr; }
+  .corpus-context { display: none; }
+}
+@media (max-width: 900px) {
+  .app-sidebar { position: static; width: auto; padding: 12px 20px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .app-brand { padding: 0; }
+  .app-brand small, .nav-label, .sidebar-note { display: none; }
+  .app-sidebar-top { display: flex; align-items: center; justify-content: space-between; }
+  .mobile-nav-toggle { display: inline-flex; min-height: 36px; font-size: 12px; }
+  .app-nav { display: flex; gap: 4px; margin-top: 12px; }
+  .app-nav a { flex: 1; justify-content: center; min-height: 40px; padding: 8px; }
+  .app-sidebar[data-collapsed=true] .app-nav { display: none; }
+  .workspace { margin-left: 0; }
+  .topbar { height: 42px; }
+  .explorer { grid-template-columns: 1fr; }
+  .list-panel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .process-list { max-height: 370px; }
+  .back-to-list { display: inline-flex; min-height: 44px; align-items: center; margin-bottom: 12px; font-size: 12px; }
+  .page-heading { align-items: start; }
+  .heading-actions { flex-wrap: wrap; justify-content: end; }
+}
+@media (max-width: 600px) {
+  :root { font-size: 14px; }
+  .app-sidebar { padding: 12px 16px; }
+  .app-nav a { font-size: 12px; gap: 6px; }
+  main.page { padding: 20px 16px 36px; }
+  .topbar { padding-inline: 16px; }
+  .local-label { display: none; }
+  h1 { font-size: 22px; }
+  .page-heading { flex-direction: column; gap: 16px; margin-bottom: 20px; }
+  .summary-strip, .stats, .metrics { gap: 12px 24px; }
+  .stat, .metric { min-width: 90px; }
+  .metric strong, .stat strong { font-size: 17px; }
+  .form-grid, .facts { grid-template-columns: 1fr; }
+  .panel-head, .panel-body, .form-section, .utility-row { padding: 16px; }
+  .utility-row, .form-footer { flex-direction: column; align-items: stretch; }
+  .form-footer { padding: 16px; }
+  button, .button, input:not([type=checkbox]), select { min-height: 44px; }
+  .checks label, .inline-check { min-height: 36px; }
+  .filterbar { padding: 16px; gap: 12px; }
+  .filterbar label { flex-basis: 130px; }
+  .filterbar .search-field { flex-basis: 100%; }
+  .filterbar button { width: 100%; }
+  .dossier { padding: 16px; }
+  .section-nav { gap: 0 16px; }
+  .section-nav a { min-height: 44px; }
+  .corpus-list article { padding: 16px; }
+  .document-row { grid-template-columns: 1fr; gap: 8px; }
+}
+</style></head>
+<body data-screen="corpus">
+<a class="skip-link" href="#main-content">Ir para o conteúdo</a>
+<aside class="app-sidebar" aria-label="Navegação do painel">
+  <div class="app-sidebar-top"><a class="app-brand" href="/"><span class="app-mark" aria-hidden="true">B</span><span>BPC Jud<small>Pesquisa judicial</small></span></a><button class="mobile-nav-toggle" id="nav-toggle" type="button" aria-expanded="true" aria-controls="app-nav">Menu</button></div>
+  <div class="nav-label">Área de trabalho</div>
+  <nav class="app-nav" id="app-nav" aria-label="Principal"><a href="/admin/analise"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M6 2.5v11m0-7h7.5"/></svg><span>Análise de casos</span></a><a href="/admin/coleta"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/><path d="M5 2v4m6 0v4m-4 0v4"/></svg><span>Coletas</span></a><a href="/admin/documentos" aria-current="page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 2.5h6l3 3v8H4z"/><path d="M10 2.5v3h3M6 8h5M6 10.5h4"/></svg><span>Corpus documental</span></a></nav>
+  <div class="sidebar-note"><a href="/docs" target="_blank" rel="noopener noreferrer">Documentação da API ↗</a>Resultados automáticos exigem revisão humana. Documentos públicos não são autos completos.</div>
+</aside>
+<div class="workspace"><header class="topbar"><div class="breadcrumbs"><span>Pesquisa BPC</span><span aria-hidden="true">/</span><strong>Corpus documental</strong></div><span class="local-label">Ambiente de pesquisa</span></header>
+<main class="page" id="main-content" tabindex="-1">
+<div class="page-heading"><div><h1>Corpus documental</h1><p>Documentos públicos e jurisprudência, identificados por fonte e versão.</p></div><a class="button" href="/admin/processos">Explorar processos</a></div>
+<div class="corpus-layout"><div><section class="surface"><form id="filter" class="filterbar"><label class="search-field">Buscar no corpus<input id="query" type="search" placeholder="Texto ou número do processo"></label><label>Fonte<select id="source"><option value="">Todas as fontes</option><option value="pje_trf1">PJe · TRF1 público</option><option value="stj">STJ</option><option value="cjf_trf1">CJF · TRF1/JEF1</option><option value="trf1_arquivo">Arquivo TRF1</option><option value="tnu">TNU</option><option value="trf2_jurisprudencia">TRF2 · jurisprudência</option><option value="trf3_jurisprudencia">TRF3 · publicados</option><option value="trf4_jurisprudencia">TRF4 · jurisprudência</option><option value="trf5_jurisprudencia">TRF5 · jurisprudência</option><option value="trf6_jurisprudencia">TRF6 · jurisprudência</option></select></label><button type="submit">Pesquisar</button></form><div class="panel-body"><p id="status" class="message" role="status" aria-live="polite">Carregando corpus…</p></div><div id="results" class="corpus-list"></div><div class="pager"><button id="prev" type="button">Anterior</button><span id="corpus-page"></span><button id="next" type="button">Próxima</button></div></section></div><aside class="corpus-context"><div class="context-note"><h3>Como ler este corpus</h3><p>Não equivale à amostra de concessões iniciais no DF/RIDE. Fonte, região e instância podem variar.</p><p>Vínculo explícito por CNJ identifica o processo. Não confirma concessão ou inclusão na amostra.</p><p>Textos podem conter dados pessoais. Retenção por privacidade não significa ausência de documento.</p></div></aside></div>
+<details class="context-data"><summary>Contexto administrativo · INSS / DF</summary><p class="research-note">Agregados administrativos, sem vínculo automático com processos ou pessoas. Não são taxas de procedência judicial.</p><section class="panel section-heading"><div class="panel-head"><h2>Indeferimentos</h2><span class="hint">Último snapshot por competência</span></div><div class="table-wrap" id="inss" tabindex="0" aria-label="Indeferimentos administrativos"></div></section><section class="panel section-heading"><div class="panel-head"><h2>Concessões</h2><span class="hint">Por espécie e despacho publicado</span></div><div class="table-wrap" id="grants" tabindex="0" aria-label="Concessões administrativas"></div></section></details></main></div>
+<script data-panel-shell>(() => { const toggle = document.getElementById('nav-toggle'); toggle.addEventListener('click', () => { const collapsed = toggle.getAttribute('aria-expanded') === 'true'; toggle.setAttribute('aria-expanded', String(!collapsed)); document.querySelector('.app-sidebar').dataset.collapsed = String(collapsed); }); })();</script>
+<script>let offset = 0, total = 0, corpusRequest = 0;
+const el = id => document.getElementById(id);
+function add(parent, tag, text) { const node = document.createElement(tag); if (text != null) node.textContent = String(text); parent.append(node); return node; }
+async function corpusGet(url) { const response = await fetch(url); if (!response.ok) throw new Error('Falha HTTP ' + response.status); return response.json(); }
+function renderDocument(item, parent) {
+  const article = add(parent, 'article');
+  const heading = add(article, 'div'); heading.className = 'document-row';
+  const identity = add(heading, 'div');
+  add(identity, 'h2', `${item.tipo_documento || 'Documento'} · ${item.tribunal || item.fonte || 'Fonte não informada'}`);
+  add(identity, 'small', `${item.fonte || 'Fonte não informada'} · ID ${item.documento_id || 'Não informado'}`);
+  const published = add(heading, 'div'); add(published, 'small', 'Publicação'); add(published, 'span', item.data_publicacao || 'Não informada');
+  const status = add(heading, 'span', item.revisao_privacidade === 'pendente' ? 'Privacidade pendente' : 'Revisão humana necessária'); status.className = 'badge';
+  add(article, 'p', `Referência: ${item.numero_origem || 'Não informada'} · CNJ explícito: ${(item.numeros_cnj || []).join(', ') || 'Não informado; sem vínculo automático'}`);
+  if (item.revisao_privacidade === 'pendente') { add(article, 'p', 'Conteúdo e links retidos por revisão de privacidade. Documento armazenado localmente; a retenção não significa ausência de texto.'); return; }
+  const explanations = {pendente: 'Arquivo original disponível, com texto pendente de conversão ou OCR.', texto_simples: 'Texto simples publicado pela fonte, sem OCR. Revisão humana necessária.', doc_legacy_preliminar: 'Conversão local preliminar de DOC antigo, sem garantia de integridade.'};
+  if (explanations[item.extracao_texto]) add(article, 'p', explanations[item.extracao_texto]);
+  for (const [label, text] of [['Ementa', item.ementa], ['Decisão publicada', item.decisao], ['Texto publicado', item.texto]]) {
+    if (text) { const details = add(article, 'details'); details.className = 'corpus-body'; add(details, 'summary', label); add(details, 'pre', text); }
+  }
+  if (!item.ementa && !item.decisao && !item.texto) add(article, 'p', 'Texto não disponibilizado neste registro.');
+  try { const url = new URL(item.url_origem); if (url.protocol === 'https:') { const link = add(article, 'a', 'Abrir fonte oficial ↗'); link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } } catch {}
+}
+async function load() {
+  const request = ++corpusRequest;
+  el('status').textContent = 'Consultando corpus…'; el('results').replaceChildren(); el('results').setAttribute('aria-busy', 'true');
+  el('prev').disabled = true; el('next').disabled = true; el('corpus-page').textContent = '';
+  try {
+    const params = new URLSearchParams({limit: 20, offset});
+    if (el('source').value) params.set('fonte', el('source').value);
+    if (el('query').value.trim()) params.set('texto', el('query').value.trim());
+    const data = await corpusGet('/admin/api/documentos?' + params); if (request !== corpusRequest) return;
+    total = data.total;
+    el('status').textContent = !data.schema_disponivel ? 'Corpus indisponível: tabelas complementares ausentes nesta base.' : !total ? 'Nenhum documento encontrado com estes filtros.' : `${new Intl.NumberFormat('pt-BR').format(total)} versões encontradas. Origem preservada; revisão humana pendente.`;
+    (data.itens || []).forEach(item => renderDocument(item, el('results')));
+    el('corpus-page').textContent = total ? `${offset + 1}–${offset + data.itens.length} de ${total}` : '0 resultados';
+    el('prev').disabled = offset === 0; el('next').disabled = offset + data.itens.length >= total;
+  } catch (error) { if (request === corpusRequest) el('status').textContent = `Corpus indisponível: ${error.message}. Pesquise novamente para tentar outra vez.`; }
+  finally { if (request === corpusRequest) el('results').setAttribute('aria-busy', 'false'); }
+}
+el('filter').addEventListener('submit', event => { event.preventDefault(); offset = 0; load(); });
+el('prev').onclick = () => { offset = Math.max(0, offset - 20); load(); };
+el('next').onclick = () => { offset += 20; load(); };
+async function loadAggregate(target, url, titles, values) {
+  try {
+    const data = await corpusGet(url); el(target).replaceChildren();
+    if (!data.itens?.length) { const empty = add(el(target), 'p', 'Nenhum agregado coletado nesta base.'); empty.className = 'empty'; return; }
+    const table = add(el(target), 'table'), head = add(table, 'thead'), heading = add(head, 'tr'), body = add(table, 'tbody');
+    titles.forEach(title => { const th = add(heading, 'th', title); th.scope = 'col'; });
+    data.itens.forEach(item => { const row = add(body, 'tr'); values(item).forEach(value => add(row, 'td', value ?? 'Não informado')); });
+  } catch (error) { el(target).replaceChildren(); const message = add(el(target), 'p', `Agregado indisponível: ${error.message}`); message.className = 'empty error'; }
+}
+function loadInss() { return loadAggregate('inss', '/admin/api/indeferimentos-inss?uf=DF', ['Competência', 'Espécie', 'Motivo publicado', 'Indeferimentos'], item => [item.competencia, item.especie === 87 ? 'BPC · deficiência' : 'BPC · idoso', item.motivo, item.quantidade]); }
+function loadGrants() { return loadAggregate('grants', '/admin/api/concessoes-inss?uf=DF', ['Competência', 'Espécie', 'Código despacho', 'Descrição publicada', 'Concessões'], item => [item.competencia, item.especie === 87 ? 'BPC · deficiência' : 'BPC · idoso', item.codigo_despacho, item.despacho, item.quantidade]); }
+load(); loadInss(); loadGrants();
 </script>
-<script>
-async function loadGrants(){
-  try{
-    const response=await fetch('/admin/api/concessoes-inss?uf=DF');
-    if(!response.ok)throw new Error('Falha ao carregar concessões INSS');
-    const data=await response.json();
-    if(!data.itens.length){add(el('grants'),'p','Nenhum agregado de concessão coletado.');return;}
-    const table=add(el('grants'),'table',''), heading=add(table,'tr','');
-    for(const title of ['Competência','Espécie','Código despacho','Descrição publicada','Concessões'])add(heading,'th',title);
-    for(const item of data.itens){
-      const row=add(table,'tr','');
-      for(const value of [item.competencia,item.especie===87?'BPC — deficiência':'BPC — idoso',item.codigo_despacho,item.despacho,item.quantidade])add(row,'td',String(value));
-    }
-  }catch(error){add(el('grants'),'p',error.message);}
-}loadGrants();
-</script></html>
+</body></html>
