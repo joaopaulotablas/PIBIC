@@ -4,18 +4,23 @@ import os
 import subprocess
 import sys
 import uuid
+from ipaddress import ip_address
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import exists, func, inspect, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 from dotenv import load_dotenv
 from .database import make_engine
+from .document_analysis import extraction_json as document_extraction_json
+from .document_schemas import TYPE as DOCUMENT_EXTRACTION_TYPE, PROMPT_VERSION as DOCUMENT_PROMPT_VERSION
+from .research import RevisaoCaso, ReviewInput, require_local, review_json, save_review
 
 from .models import (
     Assunto,
@@ -66,6 +71,7 @@ def public_document_json(item: DocumentoPublico) -> dict[str, Any]:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     with SessionLocal.begin() as session:
+        RevisaoCaso.__table__.create(session.connection(), checkfirst=True)
         session.execute(
             update(TarefaPainel)
             .where(TarefaPainel.status.in_(["na_fila", "executando"]))
@@ -202,7 +208,113 @@ def _schedule_task(
 @app.get("/", include_in_schema=False)
 @app.get("/painel", include_in_schema=False)
 def dashboard() -> FileResponse:
+    return FileResponse(STATIC_DIR / "analise.html")
+
+
+@app.get("/admin/coleta", include_in_schema=False)
+def collection_dashboard():
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/admin/analise", include_in_schema=False)
+def research_dashboard():
+    return FileResponse(STATIC_DIR / "analise.html")
+
+
+@app.get("/admin/analise.js", include_in_schema=False)
+def research_script():
+    return FileResponse(STATIC_DIR / "analise.js", media_type="text/javascript")
+
+
+@app.get("/admin/api/pesquisa/fila")
+def research_queue(request: Request, response: Response, numero: str = "",
+                   sede: str = "", assunto: int | None = None, ano: int | None = Query(None, ge=1900, le=2100),
+                   estado: str = "", com_documentos: bool = True,
+                   recorte: bool = True, limit: int = Query(25, ge=1, le=100),
+                   offset: int = Query(0, ge=0), session: Session = Depends(get_session)):
+    response.headers["Cache-Control"] = "no-store"
+    doc_counts = (select(DocumentoProcesso.processo_id.label("pid"),
+                        func.count().label("n"))
+                  .join(DocumentoPublico, DocumentoPublico.id == DocumentoProcesso.documento_id)
+                  .where(DocumentoProcesso.criterio == "cnj_explicito")
+                  .group_by(DocumentoProcesso.processo_id).subquery())
+    latest = select(RevisaoCaso.processo_id.label("pid"), func.max(RevisaoCaso.id).label("rid")).group_by(RevisaoCaso.processo_id).subquery()
+    filters = []
+    rf = [RegistroDatajud.processo_id == Processo.id]
+    if recorte:
+        rf += [RegistroDatajud.tribunal == "TRF1", RegistroDatajud.grau.in_(["G1", "JE"]),
+               func.jsonb_extract_path_text(RegistroDatajud.payload, "orgaoJulgador", "codigoMunicipioIBGE").in_(["743", "1798", "2788"])]
+        rf.append(exists(select(RegistroAssunto.registro_id).where(
+            RegistroAssunto.registro_id == RegistroDatajud.id,
+            RegistroAssunto.assunto_codigo.in_([6114, 11946, 11947]))))
+    if sede:
+        rf.append(func.jsonb_extract_path_text(RegistroDatajud.payload, "orgaoJulgador", "codigoMunicipioIBGE") == sede)
+    if ano:
+        rf += [RegistroDatajud.data_ajuizamento >= datetime(ano, 1, 1),
+               RegistroDatajud.data_ajuizamento < datetime(ano + 1, 1, 1)]
+    if assunto:
+        rf.append(exists(select(RegistroAssunto.registro_id).where(
+            RegistroAssunto.registro_id == RegistroDatajud.id, RegistroAssunto.assunto_codigo == assunto)))
+    if len(rf) > 1:
+        filters.append(exists(select(RegistroDatajud.id).where(*rf)))
+    if numero:
+        digits = "".join(c for c in numero if c.isdigit())
+        if not digits:
+            raise HTTPException(400, "Informe dígitos do CNJ")
+        filters.append(func.regexp_replace(Processo.numero_processo, r"\D", "", "g").like(f"{digits}%"))
+    if com_documentos:
+        filters.append(doc_counts.c.n > 0)
+    query = (select(Processo, doc_counts.c.n, RevisaoCaso)
+             .outerjoin(doc_counts, doc_counts.c.pid == Processo.id)
+             .outerjoin(latest, latest.c.pid == Processo.id)
+             .outerjoin(RevisaoCaso, RevisaoCaso.id == latest.c.rid).where(*filters))
+    if estado == "pendente":
+        query = query.where(RevisaoCaso.id.is_(None))
+    elif estado in {"em_revisao", "revisado"}:
+        query = query.where(RevisaoCaso.estado == estado)
+    elif estado:
+        raise HTTPException(400, "Estado de revisão inválido")
+    total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = session.execute(query.order_by(Processo.numero_processo).offset(offset).limit(limit)).all()
+    return dict(total=total, limit=limit, offset=offset, items=[dict(
+        numero_processo=p.numero_processo, documentos=n or 0,
+        estado=r.estado if r else "pendente", inclusao=r.inclusao if r else "pendente") for p, n, r in rows])
+
+
+@app.get("/admin/api/pesquisa/{numero}/leitura")
+def research_read(numero: str, request: Request, response: Response,
+                  session: Session = Depends(get_session)):
+    require_local(request)
+    response.headers["Cache-Control"] = "no-store"
+    detail = admin_process_detail(numero, session)
+    process = session.scalar(select(Processo).where(Processo.numero_processo == detail["numero_processo"]))
+    docs = list(session.scalars(select(DocumentoPublico).join(DocumentoProcesso,
+        DocumentoProcesso.documento_id == DocumentoPublico.id).where(
+        DocumentoProcesso.processo_id == process.id, DocumentoProcesso.criterio == "cnj_explicito")
+        .order_by(DocumentoPublico.id.desc())))
+    detail["documentos_publicos"] = [dict(public_document_json(d), texto=d.texto,
+        ementa=d.ementa, decisao=d.decisao, url_origem=d.url_origem, recurso_url=d.recurso_url) for d in docs]
+    extractions = list(session.scalars(select(ExtracaoIa).where(ExtracaoIa.processo_id == process.id).order_by(ExtracaoIa.criado_em.desc())))
+    detail["extracoes_ia"] = [dict(id=e.id, modelo=e.modelo, versao_prompt=e.versao_prompt,
+        tipo_extracao=e.tipo_extracao, resultado=e.resultado, criado_em=e.criado_em) for e in extractions]
+    reviews = list(session.scalars(select(RevisaoCaso).where(RevisaoCaso.processo_id == process.id).order_by(RevisaoCaso.id.desc())))
+    detail["revisoes"] = [review_json(r) for r in reviews]
+    return detail
+
+
+@app.post("/admin/api/pesquisa/{numero}/revisoes", status_code=201)
+def research_save(numero: str, payload: ReviewInput, request: Request, response: Response,
+                  session: Session = Depends(get_session)):
+    require_local(request)
+    response.headers["Cache-Control"] = "no-store"
+    if session.get_bind().dialect.name == "sqlite":
+        session.execute(text("BEGIN IMMEDIATE"))
+    detail = admin_process_detail(numero, session)
+    process = session.scalar(select(Processo).where(Processo.numero_processo == detail["numero_processo"]))
+    docs = list(session.scalars(select(DocumentoPublico).join(DocumentoProcesso,
+        DocumentoProcesso.documento_id == DocumentoPublico.id).where(
+        DocumentoProcesso.processo_id == process.id, DocumentoProcesso.criterio == "cnj_explicito")))
+    return save_review(session, process.id, payload, docs)
 
 
 @app.get("/admin/processos", include_in_schema=False)
@@ -489,7 +601,7 @@ def admin_process_detail(
             for item in communications
         ],
         "extracoes_ia": [
-            {
+            document_extraction_json(item) if item.tipo_extracao == DOCUMENT_EXTRACTION_TYPE else {
                 "tipo_extracao": item.tipo_extracao,
                 "modelo": item.modelo,
                 "versao_prompt": item.versao_prompt,
@@ -511,6 +623,65 @@ def admin_process_detail(
             for item in chunks
         ],
     }
+
+
+@app.get("/admin/api/processos/{numero_processo}/analise-documental")
+def admin_document_analysis(
+    numero_processo: str, request: Request, response: Response,
+    incluir_texto_local: bool = False, session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    if incluir_texto_local:
+        def local_host(host: str | None) -> bool:
+            if host == "localhost":
+                return True
+            try:
+                return bool(host and ip_address(host).is_loopback)
+            except ValueError:
+                return False
+        try:
+            local_client = bool(request.client and ip_address(request.client.host).is_loopback)
+        except ValueError:
+            local_client = False
+        origin = request.headers.get("origin")
+        if (not local_client or not local_host(request.url.hostname)
+                or (origin is not None and not local_host(urlsplit(origin).hostname))):
+            raise HTTPException(403, "Leitura textual exige acesso local explícito; privacidade pendente")
+    digits = "".join(c for c in numero_processo if c.isdigit())
+    if len(digits) != 20:
+        raise HTTPException(400, "Informe os 20 dígitos do número CNJ")
+    number = f"{digits[:7]}-{digits[7:9]}.{digits[9:13]}.{digits[13]}.{digits[14:16]}.{digits[16:]}"
+    process = session.scalar(select(Processo).where(Processo.numero_processo == number))
+    if process is None:
+        raise HTTPException(404, "Processo não encontrado")
+    extractions = list(session.scalars(select(ExtracaoIa).where(
+        ExtracaoIa.processo_id == process.id, ExtracaoIa.tipo_extracao == DOCUMENT_EXTRACTION_TYPE,
+    ).order_by(ExtracaoIa.criado_em.desc(), ExtracaoIa.id.desc())))
+    documents = []
+    if inspect(session.get_bind()).has_table("documentos_publicos"):
+        documents = list(session.scalars(select(DocumentoPublico).join(
+            DocumentoProcesso, DocumentoProcesso.documento_id == DocumentoPublico.id,
+        ).where(DocumentoProcesso.processo_id == process.id,
+                DocumentoProcesso.criterio == "cnj_explicito",
+                DocumentoPublico.fonte == "pje_trf1").order_by(DocumentoPublico.id)))
+        documents = [d for d in documents if d.numeros_cnj == [number] and d.numero_origem == number]
+    gaps = []
+    if not extractions:
+        gaps.append("Nenhuma extração documental executada para este processo.")
+    if not documents:
+        gaps.append("Nenhum documento PJe próprio com vínculo explícito disponível.")
+    gaps.append("Revisão humana e de privacidade pendentes; documentos públicos não são autos completos.")
+    return dict(
+        processo_id=process.id, numero_processo=number, tipo_extracao=DOCUMENT_EXTRACTION_TYPE,
+        versao_prompt=DOCUMENT_PROMPT_VERSION, revisao_humana="pendente",
+        revisao_privacidade="pendente", texto_retido=not incluir_texto_local,
+        chamadas_externas_permitidas=False, lacunas=gaps,
+        extracoes=[document_extraction_json(item, incluir_texto_local) for item in extractions],
+        documentos=[dict(id=d.id, documento_id=d.documento_id, fonte=d.fonte,
+                         hash_conteudo=d.hash_conteudo, tipo_documento=d.tipo_documento,
+                         texto=d.texto if incluir_texto_local else None,
+                         revisao_privacidade="pendente") for d in documents],
+    )
 
 
 @app.post("/tarefas/datajud", status_code=202)

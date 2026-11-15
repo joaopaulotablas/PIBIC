@@ -46,7 +46,7 @@ class PublicSourcesTest(unittest.TestCase):
         self.assertIn('value="trf6_jurisprudencia"', panel)
         self.assertIn('value="trf4_jurisprudencia"', panel)
         self.assertIn('value="trf2_jurisprudencia"', panel)
-        self.assertIn("Conteúdo e link retidos até revisão de privacidade/ética", panel)
+        self.assertIn("Conteúdo e links retidos por revisão de privacidade.", panel)
 
     def test_trf4_privacy_pending_redacts_text_and_source_url_from_panel_api(self):
         document = SimpleNamespace(id=2, fonte="trf4_jurisprudencia", documento_id="123",

@@ -34,4 +34,4 @@ bpc-ingestion = "bpc_ingestion.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-bpc_ingestion = ["static/*.html"]
+bpc_ingestion = ["static/*.html", "static/*.js"]

@@ -9,7 +9,8 @@ class DashboardTest(unittest.TestCase):
     def test_static_dashboard_is_packaged(self):
         page = STATIC_DIR / "index.html"
         self.assertTrue(page.exists())
-        self.assertIn("Painel local de coleta", page.read_text(encoding="utf-8"))
+        self.assertIn("Operações de coleta", page.read_text(encoding="utf-8"))
+        self.assertTrue((STATIC_DIR / "analise.html").exists())
 
     def test_rejects_unknown_tribunal(self):
         with self.assertRaises(ValidationError):

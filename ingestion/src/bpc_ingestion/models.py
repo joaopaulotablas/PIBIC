@@ -36,6 +36,20 @@ class Base(DeclarativeBase):
     pass
 
 
+class RevisaoCaso(Base):
+    __tablename__ = "revisoes_caso"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    processo_id: Mapped[int] = mapped_column(ForeignKey("processos.id"), index=True)
+    autor: Mapped[str] = mapped_column(String(120))
+    estado: Mapped[str] = mapped_column(String(30))
+    inclusao: Mapped[str] = mapped_column(String(30))
+    resumo: Mapped[str] = mapped_column(Text)
+    motivo: Mapped[str] = mapped_column(Text)
+    observacoes: Mapped[str] = mapped_column(Text)
+    evidencias: Mapped[list] = mapped_column(JSONB)
+    criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Coleta(Base):
     __tablename__ = "coletas"
 

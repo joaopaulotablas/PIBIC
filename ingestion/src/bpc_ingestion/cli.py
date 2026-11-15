@@ -33,6 +33,7 @@ from .datajud import (
 from .inss import InssCatalogClient
 from .inss_benefits import InssBenefitsClient, UF_NAMES, aggregate_xlsx, store_aggregates
 from .inss_concessions import DATASET as CONCESSIONS_DATASET, aggregate_concession_xlsx, store_concessions
+from .document_pipeline import add_import_arguments, add_prepare_arguments, import_command, prepare_command
 from .ipeaia import (IpeaIaClient, PROMPT_VERSION, RejectedIpeaResponse,
                     load_process_input, pending_processes, save_rejected_response)
 from .models import (Coleta, ComunicacaoPje, ExtracaoIa, IndicadorInssConcessao,
@@ -103,6 +104,10 @@ def construir_parser() -> argparse.ArgumentParser:
     transparencia.add_argument("--mes-final", type=int, required=True)
     transparencia.add_argument("--interval", type=float, default=0.5)
     commands.add_parser("ipeaia-modelos", help="Lista modelos disponíveis na API IpeaIA")
+    add_prepare_arguments(commands.add_parser(
+        "ipeaia-documentos-preparar", help="Cria backup novo e fila documental local, sem envio externo"))
+    add_import_arguments(commands.add_parser(
+        "ipeaia-documentos-importar", help="Valida/importa resultados documentais locais; revisão sempre pendente"))
     triagem = commands.add_parser("ipeaia-triagem", help="Piloto de triagem BPC com revisão pendente")
     triagem.add_argument("--limit", type=int, default=5)
     triagem.add_argument("--model", help="ID do modelo; padrão IPEAIA_MODEL")
@@ -1217,6 +1222,10 @@ def executar(argv: Sequence[str] | None = None) -> int:
         return collect_transparencia_bpc(args, settings)
     if args.command == "ipeaia-modelos":
         return ipeaia_models(settings)
+    if args.command == "ipeaia-documentos-preparar":
+        return prepare_command(args)
+    if args.command == "ipeaia-documentos-importar":
+        return import_command(args)
     if args.command == "ipeaia-triagem":
         return ipeaia_triage(args, settings)
     if args.command == "ipeaia-comunicacoes-preparar":

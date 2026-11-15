@@ -243,6 +243,15 @@ class IpeaIaTest(unittest.TestCase):
         with self.assertRaisesRegex(RejectedIpeaResponse, "Modelo divergente.*glm-5.2.*glm-5.3"):
             IpeaIaClient("https://example.test", "segredo", interval=0).classify("glm-5.2", self.source)
 
+    @patch("bpc_ingestion.ipeaia.urlopen")
+    def test_rejeita_truncamento_mesmo_com_json_sinteticamente_valido(self, open_url):
+        for reason in ("length", "content_filter", "tool_calls"):
+            response = {"choices": [{"finish_reason": reason, "message": {
+                "content": json.dumps(self.result)}}]}
+            open_url.return_value.__enter__.return_value = io.BytesIO(json.dumps(response).encode())
+            with self.assertRaisesRegex(RejectedIpeaResponse, "truncada ou incompleta"):
+                IpeaIaClient("https://example.test", "segredo", interval=0).classify("modelo", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

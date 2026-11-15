@@ -263,6 +263,8 @@ class IpeaIaClient:
             ],
         })
         try:
+            if response["choices"][0].get("finish_reason") not in (None, "stop"):
+                raise RejectedIpeaResponse("Resposta IpeaIA truncada ou incompleta; resultado rejeitado", response)
             content = response["choices"][0]["message"]["content"]
             if isinstance(content, list):
                 # Alguns modelos compatíveis representam o texto como blocos.
