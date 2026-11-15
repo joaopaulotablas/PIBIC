@@ -9,6 +9,17 @@ from collections import defaultdict
 from pathlib import Path
 
 
+def subject_codes(c):
+    """Return the BPC subject and its locally available TPU descendants."""
+    codes = {6114}
+    edges = c.execute("SELECT codigo, codigo_pai FROM referencias_tpu WHERE tipo='assunto'").fetchall()
+    while True:
+        expanded = codes | {code for code, parent in edges if parent in codes}
+        if expanded == codes:
+            return codes
+        codes = expanded
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--database", type=Path, required=True)

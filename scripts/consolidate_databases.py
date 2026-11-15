@@ -18,7 +18,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, inspect, select, text
+from sqlalchemy import MetaData, func, inspect, select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.sql.sqltypes import Uuid
 
@@ -159,6 +159,9 @@ def merge(inputs: list[tuple[str, Any]], output: Path, report_path: Path, dry_ru
                 if unknown:
                     raise ValueError(f"Tabelas fora do contrato em {source_name}: {sorted(unknown)}")
                 source_conn = source_connections.enter_context(source.connect())
+                if ("revisoes_caso" in src_names and source_conn.scalar(
+                        select(func.count()).select_from(Base.metadata.tables["revisoes_caso"]))):
+                    raise ValueError("Revisões humanas exigem remapeamento documental antes da união; use exportação portátil de uma única base para preservá-las.")
                 for table_name, table in dst_tables.items():
                     if table_name not in src_names:
                         continue
