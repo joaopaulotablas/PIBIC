@@ -477,6 +477,48 @@ Os resultados trazem também link público de consulta processual com CNJ. O col
 
 Busca BPC observada: TRF6 4.134 resultados, TRU6 19, Turmas Recursais 6.566; Varas Federais retornaram zero em buscas BPC e LOAS. Esses totais informados não são documentos baixados nem casos únicos. Piloto real: 5 URLs por cada uma das origens TRF6/TRU6/Turmas Recursais (15 novos documentos BPC no lote ampliado; corpus TRF6 total: 20 documentos). Tentativas anteriores falharam em dois documentos por múltiplos CNJs citados; a versão corrigida usa CNJ explícito no resultado e confere-o no texto. O vazio só é aceito com título explícito `0 documentos encontrados`, campos de total/página sem valor, página atual 1 e nenhum card; esse controle foi confirmado em chamada real. Nenhum documento foi enviado à IpeaIA.
 
+## Revisão humana no painel — 03/11/2026
+
+Nova tabela aditiva `revisoes_caso`, separada de `extracoes_ia`. Cada gravação é
+um evento imutável; a revisão atual é a de maior ID para o processo. Campos:
+`id` bigint PK (INTEGER no SQLite); `processo_id` FK processos, indexado;
+`autor` varchar(120), nome declarado pelo pesquisador, sem autenticação de identidade;
+`estado` varchar(30), `em_revisao` ou `revisado`; `inclusao` varchar(30),
+`pendente`, `incluir` ou `excluir`; `resumo`, `motivo`, `observacoes` text;
+`evidencias` JSON/JSONB lista de `{documento_id, hash_conteudo, trecho}`;
+`criado_em` timestamp UTC. Evidência usa PK local do documento público,
+hash da versão e trecho literal do campo texto, com vínculo CNJ explícito
+ao mesmo processo. Limites de entrada: resumo/observações 6.000 caracteres,
+motivo 3.000, até 50 evidências de até 5.000 caracteres. Conclusão exige
+síntese e justificativa; ausência de evidências não é substituída por texto
+inventado. Revisão humana não altera resultado bruto ou status da extração IA.
+
+`POST /admin/api/pesquisa/{CNJ}/revisoes` exige `anterior_id` igual à revisão
+atual (ou nulo para a primeira), devolve 409 se houver conflito. Escrita
+serializada por processo em PostgreSQL e por transação imediata no SQLite.
+`GET /admin/api/pesquisa/{CNJ}/leitura` reúne dados do processo, documentos
+vinculados, extrações e histórico. Ambos exigem cliente e host loopback,
+origem local quando presente e `Cache-Control: no-store`; escrita exige
+`X-BPC-Review: 1`. A leitura local é autorizada para análise nesta aplicação;
+não promove aprovação de privacidade nem executa chamadas externas à IA.
+Esta seção substitui a ausência de ação de revisão descrita na entrega anterior.
+
+`GET /admin/api/pesquisa/fila` permite filtros de CNJ, sede DataJud, assunto,
+ano, documentos, estado da revisão e recorte. Recorte padrão: TRF1/G1/JE,
+sedes 743/1798/2788 e assuntos 6114/11946/11947 no mesmo registro elegível.
+Não equivale ao manifesto congelado de 200 casos. Desmarcar o recorte permite
+explorar o cadastro inteiro; documentos são contados por versões vinculadas
+explicitamente, sem mistura com corpus sem vínculo. Estado pendente na fila
+significa ausência de revisão humana salva. Esses filtros não classificam
+concessão inicial nem comprovam residência.
+
+Página inicial `/` e `/admin/analise`: área de leitura e revisão; operações
+anteriores em `/admin/coleta`. A tabela é criada aditivamente na inicialização
+da API; migração Alembic `20261103_0009` disponível para PostgreSQL. Exportação
+portátil conserva revisões e cria tabela vazia em cópias antigas. Ferramentas
+de união de bancos precisam remapear também os IDs documentais nas evidências
+humanas antes de transportar revisões entre bancos; não usar coincidência de PK.
+
 ## IA
 
 ### Auditoria local de disponibilidade textual — v1 (08/10/2026)
@@ -751,6 +793,105 @@ enviado a IpeaIA nesta etapa. Importacao local de resultado exige todas as
 evidencias validadas contra o banco e insere uma nova extracao pendente, sem
 atualizar ou apagar extracoes anteriores.
 
+### Análise documental PJe — `documento_bpc_texto_v1` (29/10/2026)
+
+Contrato aditivo registrado antes da implementação: `extracoes_ia` conserva
+colunas e chave única. Novo `tipo_extracao=documento_bpc_texto`, prompt
+`ipeaia_documentos_v1`, schema `documento_bpc_v1`, pipeline `pje_documental_v1`.
+Triagem DataJud e análise de comunicações antigas permanecem compatíveis.
+Ferramentas antigas de consolidação não devem transportar extrações deste tipo
+sem remapear IDs documentais; coincidência numérica não prova identidade.
+
+Entrada: processo existente, documentos `fonte=pje_trf1`, vínculo
+`documento_processos.criterio=cnj_explicito`, CNJ da origem igual ao processo,
+parser `pje_publico_v1`, texto e hashes conferidos. Jurisprudência complementar
+não é documento próprio da amostra. Manifesto congela IDs/hash; mudança exige
+nova preparação. Limites: 40 processos por piloto e 30 documentos/120.000
+caracteres por processo. Excesso bloqueia o processo explicitamente, sem cortar
+texto ou descartar documento silenciosamente. Usar o subconjunto piloto
+explícito do manifesto, nunca os primeiros 40 dos 200.
+
+Saída: `resumo_caso` natural (até 3.000 caracteres), `provavel_causa`,
+`ato_administrativo`, `negativa_administrativa`, `requisito_controvertido`,
+`fundamento_judicial`, `desfecho={resultado,natureza,transito_julgado}`, `lacunas`,
+`evidencias`, `versao_prompt`, `revisao_humana=pendente` e
+`status_validacao=pendente`. Sem suporte exige `indeterminado`. Resultado:
+procedente/improcedente/parcial/extinto_sem_merito/ordem_processual/indeterminado;
+natureza: provisoria/final/processual/indeterminado; trânsito: sim/nao/indeterminado.
+Final não significa trânsito. Candidato, residência e inclusão definitiva no
+recorte continuam sujeitos à revisão humana.
+
+Evidência: `documento_id` (PK local), `hash_conteudo`, `campo=texto`, `inicio`,
+`fim`, `trecho`, `sustenta` (campo analítico). Índices Unicode Python, base zero,
+fim exclusivo, texto Silver integral: `texto[inicio:fim] == trecho`. Conferir
+novamente vínculo e hashes de documento/texto antes da gravação. Citações
+`blockquote` da Bronze HTML e regiões textuais identificadas como precedentes
+são excluídas como suporte factual. Bronze ausente/divergente bloqueia a
+preparação. Caminho histórico ausente pode ser resolvido por `--bronze-map`,
+auditoria explícita com um caminho local por documento: reconferir CNJ, ID,
+hash do payload, texto e SHA-256 dos bytes HTML descompactados; registrar
+caminho original e local sem reescrever `documentos_publicos`. Detecção
+automática não certifica interpretação semântica; toda
+afirmação substantiva precisa de evidência e revisão humana posterior.
+
+Persistência registra modelo declarado, versões e proveniência de TODOS os
+documentos (PK local, fonte, ID de origem, hash de versão, SHA-256 do texto e
+da Bronze HTML descompactada),
+mais `origem_execucao=importacao_local` ou `ipeaia_api`. Importação local nunca
+conta como chamada real. Repetição idêntica é idempotente; divergência na mesma
+chave é erro. Nenhum resultado sintético entra na base real.
+
+O plano exige dados pessoais exclusivamente locais. Preparação/dry-run não
+autorizam envio; execução documental externa fica bloqueada nesta entrega.
+Catálogo autenticado de modelos não recebe texto nem comprova aprovação ética.
+Fila reproduzível e importação local ficam disponíveis. Ampliação além de 40
+exige gate de qualidade humano; nenhum status é promovido automaticamente.
+
+Painel: `GET /admin/api/processos/{numero}/analise-documental` expõe metadados,
+proveniência, estados e lacunas; resumo, narrativas e trechos ficam retidos por
+padrão com privacidade pendente. Serialização reutilizável permite leitura local
+explícita com `?incluir_texto_local=true`, aceita apenas de cliente loopback e
+com `Cache-Control: no-store`, sem autorizar publicação. O endpoint de detalhes existente também
+retém o conteúdo deste novo tipo. Não há endpoint que conclua revisão humana.
+
+Preparação reproduzível (usar nomes de saída novos em cada execução):
+
+```powershell
+.venv/Scripts/python.exe -m bpc_ingestion ipeaia-documentos-preparar `
+  --database data/bpc-consolidado-luna-20261007.sqlite `
+  --backup data/ia-documental/ia-backup-20261029-02.sqlite `
+  --manifest data/amostragem-inicial/revisao_humana_40.json `
+  --output data/ia-documental/fila-piloto-40-20261029-02.json `
+  --report data/ia-documental/dry-run-20261029-02.json `
+  --bronze-map data/ia-documental/busca-bronze-local-20261029-01.json
+```
+
+Mapa opcional: objeto `documentos`, lista de objetos com `documento_id` inteiro
+(PK local) e `candidatos_hash_validado` contendo exatamente um caminho local.
+O nome desse campo não dispensa reconferência integral pelo backend. Mapa
+adulterado, arquivo fora da raiz `--raw-root` ou identidade divergente é rejeitado.
+Uma busca local recuperou 64 caminhos históricos por conteúdo, sem nova coleta.
+O dry-run final preparou 40 processos/113 documentos, integridade OK, zero FKs,
+zero extrações e zero chamadas de geração; revisão humana permanece pendente.
+
+Importação local recebe `--source` com a fila acima e `--results` com lista
+`[{"processo_id": <inteiro>, "resultado": <DocumentResult>}]`. Executar primeiro
+sem `--executar-local` para validar; só essa opção grava, atomicamente e sempre
+pendente. O identificador `--model` é o modelo declarado realmente utilizado;
+esse comando não executa nem comprova uma chamada IpeaIA:
+
+```powershell
+.venv/Scripts/python.exe -m bpc_ingestion ipeaia-documentos-importar `
+  --database data/ia-documental/ia-backup-20261029-02.sqlite `
+  --source data/ia-documental/fila-piloto-40-20261029-02.json `
+  --results data/ia-documental/resultados-locais-reais.json `
+  --model identificador-real-do-modelo-local
+```
+
+O arquivo de resultados reais acima ainda não existe: nenhum resultado foi
+inventado para preencher a fila. O schema JSON e o prompt completo acompanham
+a fila. Detalhes de execução: `data/ia-documental/RELATORIO_PIPELINE_20261029.md`.
+
 ## Regras de qualidade
 
 - Datas normalizadas em UTC;
@@ -769,6 +910,7 @@ atualizar ou apagar extracoes anteriores.
 
 | Data | Decisão | Consequência |
 | --- | --- | --- |
+| 03/11/2026 | Tornar a leitura e revisão por caso o fluxo inicial do painel, com tabela aditiva de revisões humanas e acesso textual local explícito. | Documentos, extrações e linha do tempo podem ser analisados na aplicação. Síntese, motivo, inclusão, citações e histórico humano são persistidos separadamente da IA; identidade/hash/trecho e concorrência são conferidos. Sem chamada externa automática. |
 | 12/10/2026 | Coletar a população do Censo 2022 como contexto do denominador etário DF/RIDE, sem derivar elegibilidade individual. | IBGE SIDRA tabela 9514/variável 93: 4.556 linhas de idade para DF + 29 municípios GO + quatro MG da lista oficial Sudeco. CSV, respostas JSON e metadados em `data/raw/ibge_censo2022_ride/`; SHA-256 do JSON `86faa097a773ef8000aff1c165cce1b684a9cf54ce1aeb22a5f59109bc262c4e`. Os 53 valores `-` foram preservados sem conversão para zero. Contexto populacional de 2022, não residência dos litigantes nem medida direta de elegibilidade; fora da Silver e da IpeaIA, sem novo schema. |
 | 12/10/2026 | Investigar exportação agregada do IVCAD/Observatório e parar antes de interagir com o painel quando o controle de interface não validou a URL atual do navegador. | Nenhum dado foi exportado e nenhuma interface interna/Qlik foi chamada diretamente; seguir para fontes públicas acessíveis por endpoint/arquivo. CECAD TABCAD permanece separado: exige aceite explícito de Termo de Compromisso de Manutenção de Sigilo, não aceito nesta coleta. |
 | 12/10/2026 | Coletar em formato bruto e tabular a população do Censo 2022 para contextualizar o denominador etário do recorte DF/RIDE, sem derivar elegibilidade individual. | IBGE SIDRA tabela 9514/variável 93: 4.556 linhas de idade para DF + 29 municípios de GO + quatro de MG, lista geográfica oficial da Sudeco. CSV, respostas JSON e metadados em `data/raw/ibge_censo2022_ride/`; hash SHA-256 do JSON `86faa097a773ef8000aff1c165cce1b684a9cf54ce1aeb22a5f59109bc262c4e`. Os 53 valores `-` foram mantidos textualmente, sem serem convertidos para zero. É contexto populacional de 2022, não residência dos litigantes nem medida direta de elegibilidade; fora da Silver e da IpeaIA, sem novo schema. |
